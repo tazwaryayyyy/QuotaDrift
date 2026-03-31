@@ -25,7 +25,7 @@ def get_router() -> Router:
             model_list=config.MODEL_LIST,
             fallbacks=config.FALLBACK_CHAIN,
             allowed_fails=2,
-            cooldown_time=300,      # 5 min cooldown on rate limit
+            cooldown_time=300,  # 5 min cooldown on rate limit
             retry_after=3,
             num_retries=1,
             set_verbose=False,
@@ -63,15 +63,15 @@ async def chat(messages: list[dict], system: str | None = None) -> dict:
         model_manager.model_manager.record_success(slot_name, request_id, tokens)
 
         # Update rate limits if available
-        if hasattr(response, 'headers'):
-            remaining = response.headers.get('x-ratelimit-remaining')
-            reset = response.headers.get('x-ratelimit-reset')
+        if hasattr(response, "headers"):
+            remaining = response.headers.get("x-ratelimit-remaining")
+            reset = response.headers.get("x-ratelimit-reset")
             model_manager.model_manager.update_rate_limit(slot_name, remaining, reset)
 
         return {
-            "content":    response.choices[0].message.content,
+            "content": response.choices[0].message.content,
             "model_used": model_id,
-            "tokens":     tokens,
+            "tokens": tokens,
         }
     except Exception as e:
         # Record failure
@@ -94,7 +94,10 @@ async def stream_chat(messages: list[dict], system: str | None = None):
     # Get best available model
     slot_name = model_manager.model_manager.get_best_model(request_id)
     if not slot_name:
-        yield {"type": "error", "message": "No models available - all circuits open or rate limited"}
+        yield {
+            "type": "error",
+            "message": "No models available - all circuits open or rate limited",
+        }
         return
 
     # Start request tracking
@@ -137,11 +140,19 @@ async def stream_chat(messages: list[dict], system: str | None = None):
 
         # Update rate limits if available
         try:
-            if hasattr(response, "_response_object") and hasattr(response._response_object, "headers"):
+            if hasattr(response, "_response_object") and hasattr(
+                response._response_object, "headers"
+            ):
                 headers = response._response_object.headers
-                remaining = headers.get("x-ratelimit-remaining-requests") or headers.get("x-ratelimit-remaining")
-                reset = headers.get("x-ratelimit-reset-requests") or headers.get("x-ratelimit-reset")
-                model_manager.model_manager.update_rate_limit(slot_name, remaining, reset)
+                remaining = headers.get(
+                    "x-ratelimit-remaining-requests"
+                ) or headers.get("x-ratelimit-remaining")
+                reset = headers.get("x-ratelimit-reset-requests") or headers.get(
+                    "x-ratelimit-reset"
+                )
+                model_manager.model_manager.update_rate_limit(
+                    slot_name, remaining, reset
+                )
         except Exception:
             pass
 
@@ -157,27 +168,39 @@ async def stream_chat(messages: list[dict], system: str | None = None):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _update_ttft(slot: str, ttft_ms: float):
     if slot in config.health:
         h = config.health[slot]
         h["ttft_samples"] += 1
-        h["ttft_ms_avg"] = ((h["ttft_ms_avg"] * (h["ttft_samples"] - 1)) + ttft_ms) / h["ttft_samples"]
+        h["ttft_ms_avg"] = ((h["ttft_ms_avg"] * (h["ttft_samples"] - 1)) + ttft_ms) / h[
+            "ttft_samples"
+        ]
+
 
 def _update_rate_limits(slot: str, headers: dict):
     # Common header patterns
-    remaining = headers.get("x-ratelimit-remaining-requests") or headers.get("x-ratelimit-remaining")
-    reset     = headers.get("x-ratelimit-reset-requests") or headers.get("x-ratelimit-reset")
+    remaining = headers.get("x-ratelimit-remaining-requests") or headers.get(
+        "x-ratelimit-remaining"
+    )
+    reset = headers.get("x-ratelimit-reset-requests") or headers.get(
+        "x-ratelimit-reset"
+    )
 
     if slot in config.health:
         if remaining is not None:
             config.health[slot]["rl_remaining"] = int(remaining)
         if reset is not None:
             from datetime import datetime, timedelta
+
             try:
                 # reset is often seconds until reset
-                config.health[slot]["rl_reset_at"] = (datetime.utcnow() + timedelta(seconds=float(reset))).isoformat()
+                config.health[slot]["rl_reset_at"] = (
+                    datetime.utcnow() + timedelta(seconds=float(reset))
+                ).isoformat()
             except Exception:
                 pass
+
 
 def _prepend_system(messages: list[dict], system: str | None) -> list[dict]:
     if not system:

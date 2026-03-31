@@ -52,6 +52,7 @@ import router as ai_router
 
 load_dotenv()
 
+
 # ---------------------------------------------------------------------------
 # Structured Logging Configuration
 # ---------------------------------------------------------------------------
@@ -70,21 +71,22 @@ class JSONFormatter(logging.Formatter):
         }
 
         # Add request ID if available
-        if hasattr(record, 'request_id'):
-            log_entry['request_id'] = record.request_id
+        if hasattr(record, "request_id"):
+            log_entry["request_id"] = record.request_id
 
         # Add exception info if present
         if record.exc_info:
-            log_entry['exception'] = self.formatException(record.exc_info)
+            log_entry["exception"] = self.formatException(record.exc_info)
 
         return json.dumps(log_entry)
+
 
 def setup_logging():
     """Configure structured logging with rotation for the application."""
     # Create formatters
     json_formatter = JSONFormatter()
     console_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
     # Create handlers
@@ -93,9 +95,7 @@ def setup_logging():
 
     # File handler with rotation (10MB max, keep 5 files)
     file_handler = logging.handlers.RotatingFileHandler(
-        'quotadrift.log',
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=5
+        "quotadrift.log", maxBytes=10 * 1024 * 1024, backupCount=5  # 10MB
     )
     file_handler.setFormatter(json_formatter)
 
@@ -106,6 +106,7 @@ def setup_logging():
     root_logger.addHandler(file_handler)
 
     return root_logger
+
 
 # Setup logging
 logger = setup_logging()
@@ -125,6 +126,7 @@ app.add_middleware(
 # Define STATIC_DIR
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 # ---------------------------------------------------------------------------
 # Request ID Middleware
@@ -168,19 +170,20 @@ async def startup():
 
     logger.info("QuotaDrift startup complete - all systems ready")
 
+
 async def verify_providers():
     """Verify that all configured providers have valid API keys."""
     logger.info("Verifying provider configuration...")
 
     required_env_vars = {
-        'GROQ_API_KEY': 'Groq',
-        'GITHUB_TOKEN': 'GitHub Models',
-        'MISTRAL_API_KEY': 'Mistral AI',
-        'SILICONFLOW_API_KEY': 'Silicon Flow',
-        'HUGGINGFACE_API_KEY': 'Hugging Face',
-        'CLOUDFLARE_API_KEY': 'Cloudflare Workers AI',
-        'CLOUDFLARE_ACCOUNT_ID': 'Cloudflare Workers AI',
-        'OPENROUTER_API_KEY': 'OpenRouter'
+        "GROQ_API_KEY": "Groq",
+        "GITHUB_TOKEN": "GitHub Models",
+        "MISTRAL_API_KEY": "Mistral AI",
+        "SILICONFLOW_API_KEY": "Silicon Flow",
+        "HUGGINGFACE_API_KEY": "Hugging Face",
+        "CLOUDFLARE_API_KEY": "Cloudflare Workers AI",
+        "CLOUDFLARE_ACCOUNT_ID": "Cloudflare Workers AI",
+        "OPENROUTER_API_KEY": "OpenRouter",
     }
 
     missing_vars = []
@@ -197,28 +200,29 @@ async def verify_providers():
     # Test basic connectivity for each provider
     await test_provider_connectivity()
 
+
 async def test_provider_connectivity():
     """Test basic connectivity for each provider."""
 
     # Only test if we have at least one provider key
-    if not os.getenv('GROQ_API_KEY'):
+    if not os.getenv("GROQ_API_KEY"):
         logger.warning("Skipping connectivity tests - no primary provider key found")
         return
 
     test_providers = []
 
-    if os.getenv('GROQ_API_KEY'):
-        test_providers.append('Groq')
-    if os.getenv('MISTRAL_API_KEY'):
-        test_providers.append('Mistral AI')
-    if os.getenv('SILICONFLOW_API_KEY'):
-        test_providers.append('Silicon Flow')
-    if os.getenv('HUGGINGFACE_API_KEY'):
-        test_providers.append('Hugging Face')
-    if os.getenv('CLOUDFLARE_API_KEY') and os.getenv('CLOUDFLARE_ACCOUNT_ID'):
-        test_providers.append('Cloudflare Workers AI')
-    if os.getenv('OPENROUTER_API_KEY'):
-        test_providers.append('OpenRouter')
+    if os.getenv("GROQ_API_KEY"):
+        test_providers.append("Groq")
+    if os.getenv("MISTRAL_API_KEY"):
+        test_providers.append("Mistral AI")
+    if os.getenv("SILICONFLOW_API_KEY"):
+        test_providers.append("Silicon Flow")
+    if os.getenv("HUGGINGFACE_API_KEY"):
+        test_providers.append("Hugging Face")
+    if os.getenv("CLOUDFLARE_API_KEY") and os.getenv("CLOUDFLARE_ACCOUNT_ID"):
+        test_providers.append("Cloudflare Workers AI")
+    if os.getenv("OPENROUTER_API_KEY"):
+        test_providers.append("OpenRouter")
 
     logger.info(f"Testing connectivity for: {', '.join(test_providers)}")
 
@@ -236,15 +240,14 @@ class RunCodeRequest(BaseModel):
     filename: str | None = None
     timeout: int | None = 10
 
+
 @app.post("/api/run-code")
 async def run_code(request: RunCodeRequest):
     """Execute code in a sandboxed environment."""
     try:
         runner = enhanced_agent_runner.get_runner()
         result = await runner.run_code(
-            code=request.code,
-            language=request.language,
-            filename=request.filename
+            code=request.code, language=request.language, filename=request.filename
         )
 
         return {
@@ -254,7 +257,7 @@ async def run_code(request: RunCodeRequest):
             "exit_code": result.exit_code,
             "execution_time": result.execution_time,
             "language": result.language,
-            "error": result.error
+            "error": result.error,
         }
 
     except Exception as e:
@@ -265,8 +268,9 @@ async def run_code(request: RunCodeRequest):
             "stderr": "",
             "exit_code": 1,
             "execution_time": 0,
-            "language": request.language or "unknown"
+            "language": request.language or "unknown",
         }
+
 
 @app.get("/api/languages")
 async def get_supported_languages():
@@ -276,10 +280,7 @@ async def get_supported_languages():
 
     return {
         "languages": languages,
-        "details": {
-            lang: runner.get_language_info(lang)
-            for lang in languages
-        }
+        "details": {lang: runner.get_language_info(lang) for lang in languages},
     }
 
 
@@ -289,38 +290,45 @@ class EditMessageRequest(BaseModel):
     new_content: str
     system: str | None = None
 
+
 class ShareRequest(BaseModel):
     session_id: int
     expires_hours: int | None = 24
 
+
 class NewSessionRequest(BaseModel):
-    project_name:        str
+    project_name: str
     project_description: str = ""
-    session_title:       str = "New session"
+    session_title: str = "New session"
+
 
 class ChatRequest(BaseModel):
-    session_id:       int
-    message:          str
-    project_context:  str | None = None   # extra system context from the user
-    prune_n:          int | None = 0      # for editing/regenerating messages
+    session_id: int
+    message: str
+    project_context: str | None = None  # extra system context from the user
+    prune_n: int | None = 0  # for editing/regenerating messages
+
 
 class SwitchContextRequest(BaseModel):
     session_id: int
 
+
 class AgentRunRequest(BaseModel):
-    code:      str
-    language:  str
+    code: str
+    language: str
     session_id: int | None = None
 
+
 class AgentHealRequest(BaseModel):
-    code:        str
-    language:    str
-    session_id:  int
+    code: str
+    language: str
+    session_id: int
     max_retries: int | None = 3
+
 
 class AgentPlanRequest(BaseModel):
     session_id: int
-    task:       str
+    task: str
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +344,9 @@ async def index():
 # ---------------------------------------------------------------------------
 @app.post("/api/session/new")
 async def new_session(body: NewSessionRequest):
-    project_id = memory.upsert_project(body.project_name, body.project_description or "")
+    project_id = memory.upsert_project(
+        body.project_name, body.project_description or ""
+    )
     session_id = memory.create_session(project_id, body.session_title or "New session")
     return {
         "project_id": project_id,
@@ -373,6 +383,7 @@ async def chat_stream(body: ChatRequest):
       data: {"type": "done",   "model": "...", "tokens": N}
       data: {"type": "error",  "message": "..."}
     """
+
     async def _generate():
         # 0. Prune prior messages if doing an Edit or Regenerate
         if getattr(body, "prune_n", 0) > 0:
@@ -406,7 +417,9 @@ async def chat_stream(body: ChatRequest):
             search_query = await memory.rewrite_query(body.message, ai_router.chat)
 
         relevant_session = memory.semantic_search(body.message, body.session_id, n=2)
-        relevant_files   = memory.hybrid_search_rrf(search_query, project_id, body.session_id, n=3)
+        relevant_files = memory.hybrid_search_rrf(
+            search_query, project_id, body.session_id, n=3
+        )
 
         # 6. Build system prompt
         system_parts = [
@@ -422,14 +435,20 @@ async def chat_stream(body: ChatRequest):
                 "type": "sources",
                 "memory_hits": len(relevant_session),
                 "file_hits": len(relevant_files),
-                "snippets": [s[:100] + "..." for s in (relevant_session + relevant_files)]
+                "snippets": [
+                    s[:100] + "..." for s in (relevant_session + relevant_files)
+                ],
             }
             yield f"data: {json.dumps(sources_event)}\n\n"
 
         if relevant_session:
-            system_parts.append("\nRelevant session context:\n" + "\n---\n".join(relevant_session))
+            system_parts.append(
+                "\nRelevant session context:\n" + "\n---\n".join(relevant_session)
+            )
         if relevant_files:
-            system_parts.append("\nRelevant project code:\n" + "\n---\n".join(relevant_files))
+            system_parts.append(
+                "\nRelevant project code:\n" + "\n---\n".join(relevant_files)
+            )
 
         system = "\n".join(system_parts)
 
@@ -446,7 +465,7 @@ async def chat_stream(body: ChatRequest):
 
         # 6. Stream response
         full_response = []
-        model_used    = "unknown"
+        model_used = "unknown"
 
         async for event in ai_router.stream_chat(llm_messages, system):
             yield f"data: {json.dumps(event)}\n\n"
@@ -463,7 +482,9 @@ async def chat_stream(body: ChatRequest):
         content = "".join(full_response)
         if content:
             memory.save_message(
-                body.session_id, "assistant", content,
+                body.session_id,
+                "assistant",
+                content,
                 model=model_used,
                 tokens=len(full_response),
             )
@@ -475,8 +496,8 @@ async def chat_stream(body: ChatRequest):
         _generate(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control":    "no-cache",
-            "X-Accel-Buffering": "no",   # Disable nginx buffering
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
         },
     )
 
@@ -495,12 +516,12 @@ async def switch_context(body: SwitchContextRequest):
     if not history:
         raise HTTPException(400, "No messages in session to compile.")
 
-    state    = await compiler.compile_state(history, ai_router.chat)
-    handoff  = compiler.build_handoff_system(state)
+    state = await compiler.compile_state(history, ai_router.chat)
+    handoff = compiler.build_handoff_system(state)
 
     return {
-        "compiled_state":  state,
-        "handoff_system":  handoff,
+        "compiled_state": state,
+        "handoff_system": handoff,
     }
 
 
@@ -515,10 +536,10 @@ async def edit_message(request: EditMessageRequest):
             raise HTTPException(status_code=404, detail="Message index out of range")
 
         # Edit the message
-        messages[request.message_index]['content'] = request.new_content
+        messages[request.message_index]["content"] = request.new_content
 
         # Remove all messages after the edited one
-        messages_to_keep = messages[:request.message_index + 1]
+        messages_to_keep = messages[: request.message_index + 1]
 
         # Update session with truncated messages
         memory.update_session_messages(request.session_id, messages_to_keep)
@@ -527,19 +548,22 @@ async def edit_message(request: EditMessageRequest):
         if request.system and request.message_index == 0:
             memory.update_session_system(request.session_id, request.system)
 
-        logger.info(f"Edited message {request.message_index} in session {request.session_id}")
+        logger.info(
+            f"Edited message {request.message_index} in session {request.session_id}"
+        )
         MESSAGES_PROCESSED.inc()
 
         return {
             "success": True,
             "message": f"Message {request.message_index} edited successfully",
             "session_id": request.session_id,
-            "message_index": request.message_index
+            "message_index": request.message_index,
         }
 
     except Exception as e:
         logger.error(f"Error editing message: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
+
 
 @app.post("/api/chat/regenerate")
 async def regenerate_message(request: EditMessageRequest):
@@ -552,46 +576,45 @@ async def regenerate_message(request: EditMessageRequest):
             raise HTTPException(status_code=404, detail="Message index out of range")
 
         # Keep messages before the target
-        messages_to_regenerate = all_messages[:request.message_index]
+        messages_to_regenerate = all_messages[: request.message_index]
 
         # Get the message to regenerate (for context)
         target_message = all_messages[request.message_index]
 
         # Generate new response
         response = await ai_router.chat(
-            messages=messages_to_regenerate,
-            system=request.system
+            messages=messages_to_regenerate, system=request.system
         )
 
         # Update the message
-        target_message['content'] = response['content']
-        target_message['model_used'] = response['model_used']
+        target_message["content"] = response["content"]
+        target_message["model_used"] = response["model_used"]
 
         # Update session
         updated_messages = messages_to_regenerate + [target_message]
         memory.update_session_messages(request.session_id, updated_messages)
 
-        logger.info(f"Regenerated message {request.message_index} in session {request.session_id}")
+        logger.info(
+            f"Regenerated message {request.message_index} in session {request.session_id}"
+        )
         MESSAGES_PROCESSED.inc()
         PROVIDER_REQUESTS.labels(
-            provider=response['model_used'],
-            status='success'
+            provider=response["model_used"], status="success"
         ).inc()
 
         return {
             "success": True,
-            "content": response['content'],
-            "model_used": response['model_used'],
-            "tokens": response['tokens'],
+            "content": response["content"],
+            "model_used": response["model_used"],
+            "tokens": response["tokens"],
             "session_id": request.session_id,
-            "message_index": request.message_index
+            "message_index": request.message_index,
         }
 
     except Exception as e:
         logger.error(f"Error regenerating message: {e}")
         PROVIDER_ERRORS.labels(
-            provider='unknown',
-            error_type='regeneration_failed'
+            provider="unknown", error_type="regeneration_failed"
         ).inc()
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -603,6 +626,7 @@ async def regenerate_message(request: EditMessageRequest):
 # Store for share tokens (in production, use a database)
 share_tokens: dict[str, dict] = {}
 
+
 @app.post("/api/session/share")
 async def create_share_link(request: ShareRequest):
     """Create a shareable link for a session."""
@@ -613,14 +637,15 @@ async def create_share_link(request: ShareRequest):
         "session_id": request.session_id,
         "expires_at": expires_at.isoformat(),
         "created_at": datetime.utcnow().isoformat(),
-        "access_count": 0
+        "access_count": 0,
     }
 
     return {
         "share_url": f"/shared/{token}",
         "token": token,
-        "expires_at": expires_at.isoformat()
+        "expires_at": expires_at.isoformat(),
     }
+
 
 @app.get("/api/shared/{token}")
 async def get_shared_session(token: str):
@@ -654,18 +679,19 @@ async def get_shared_session(token: str):
                 "model": session["model"] if session else None,
                 "project": {
                     "name": project["name"] if project else "Unknown",
-                    "description": project["description"] if project else ""
-                }
+                    "description": project["description"] if project else "",
+                },
             },
             "messages": messages,
             "share_info": {
                 "created_at": share_data["created_at"],
                 "expires_at": share_data["expires_at"],
-                "access_count": share_data["access_count"]
-            }
+                "access_count": share_data["access_count"],
+            },
         }
     except Exception:
         raise HTTPException(status_code=404, detail="Session not found") from None
+
 
 @app.get("/shared/{token}")
 async def serve_shared_page(token: str):
@@ -676,6 +702,7 @@ async def serve_shared_page(token: str):
     except HTTPException:
         return Response("<h1>Share link not found or expired</h1>", status_code=404)
 
+
 @app.get("/api/provider-test")
 async def test_providers():
     """Test connectivity for all configured providers."""
@@ -683,25 +710,25 @@ async def test_providers():
     results = {}
 
     # Test Groq
-    if os.getenv('GROQ_API_KEY'):
+    if os.getenv("GROQ_API_KEY"):
         try:
             # Simple test call
             response = await ai_router.chat(
                 messages=[{"role": "user", "content": "Say 'test'"}],
-                system="You are a test assistant. Respond with only the word 'test'."
+                system="You are a test assistant. Respond with only the word 'test'.",
             )
-            results['groq'] = {
-                'status': 'success',
-                'model_used': response.get('model_used', 'unknown'),
-                'response': response.get('content', 'no content')[:50]
+            results["groq"] = {
+                "status": "success",
+                "model_used": response.get("model_used", "unknown"),
+                "response": response.get("content", "no content")[:50],
             }
         except Exception as e:
-            results['groq'] = {'status': 'error', 'error': str(e)}
+            results["groq"] = {"status": "error", "error": str(e)}
     else:
-        results['groq'] = {'status': 'no_key'}
+        results["groq"] = {"status": "no_key"}
 
     # Test Mistral
-    if os.getenv('MISTRAL_API_KEY'):
+    if os.getenv("MISTRAL_API_KEY"):
         try:
             # Force use of mistral by temporarily changing config
             original_primary = config.MODEL_LIST[0]
@@ -709,79 +736,107 @@ async def test_providers():
                 "model_name": "test_mistral",
                 "litellm_params": {
                     "model": "mistral/mistral-small-latest",
-                    "api_key": "os.environ/MISTRAL_API_KEY"
-                }
+                    "api_key": "os.environ/MISTRAL_API_KEY",
+                },
             }
 
             response = await ai_router.chat(
                 messages=[{"role": "user", "content": "Say 'test'"}],
-                system="You are a test assistant. Respond with only the word 'test'."
+                system="You are a test assistant. Respond with only the word 'test'.",
             )
-            results['mistral'] = {
-                'status': 'success',
-                'model_used': response.get('model_used', 'unknown'),
-                'response': response.get('content', 'no content')[:50]
+            results["mistral"] = {
+                "status": "success",
+                "model_used": response.get("model_used", "unknown"),
+                "response": response.get("content", "no content")[:50],
             }
 
             # Restore original config
             config.MODEL_LIST[0] = original_primary
         except Exception as e:
-            results['mistral'] = {'status': 'error', 'error': str(e)}
+            results["mistral"] = {"status": "error", "error": str(e)}
             # Restore original config
             config.MODEL_LIST[0] = original_primary
     else:
-        results['mistral'] = {'status': 'no_key'}
+        results["mistral"] = {"status": "no_key"}
 
     # Test other providers (basic key check only to avoid consuming tokens)
     for provider, env_key, display_name in [
-        ('siliconflow', 'SILICONFLOW_API_KEY', 'Silicon Flow'),
-        ('huggingface', 'HUGGINGFACE_API_KEY', 'Hugging Face'),
-        ('cloudflare', 'CLOUDFLARE_API_KEY', 'Cloudflare Workers AI'),
-        ('openrouter', 'OPENROUTER_API_KEY', 'OpenRouter')
+        ("siliconflow", "SILICONFLOW_API_KEY", "Silicon Flow"),
+        ("huggingface", "HUGGINGFACE_API_KEY", "Hugging Face"),
+        ("cloudflare", "CLOUDFLARE_API_KEY", "Cloudflare Workers AI"),
+        ("openrouter", "OPENROUTER_API_KEY", "OpenRouter"),
     ]:
         if os.getenv(env_key):
-            results[provider] = {'status': 'key_present', 'message': f'{display_name} API key configured'}
-            if provider == 'cloudflare' and not os.getenv('CLOUDFLARE_ACCOUNT_ID'):
-                results[provider]['status'] = 'incomplete'
-                results[provider]['message'] = f'{display_name} API key present but missing ACCOUNT_ID'
+            results[provider] = {
+                "status": "key_present",
+                "message": f"{display_name} API key configured",
+            }
+            if provider == "cloudflare" and not os.getenv("CLOUDFLARE_ACCOUNT_ID"):
+                results[provider]["status"] = "incomplete"
+                results[provider][
+                    "message"
+                ] = f"{display_name} API key present but missing ACCOUNT_ID"
         else:
-            results[provider] = {'status': 'no_key', 'message': f'{display_name} API key not configured'}
+            results[provider] = {
+                "status": "no_key",
+                "message": f"{display_name} API key not configured",
+            }
 
     return {
-        'timestamp': datetime.utcnow().isoformat(),
-        'results': results,
-        'summary': {
-            'total_providers': len(results),
-            'configured': len([r for r in results.values() if r.get('status') != 'no_key']),
-            'tested_successfully': len([r for r in results.values() if r.get('status') == 'success'])
-        }
+        "timestamp": datetime.utcnow().isoformat(),
+        "results": results,
+        "summary": {
+            "total_providers": len(results),
+            "configured": len(
+                [r for r in results.values() if r.get("status") != "no_key"]
+            ),
+            "tested_successfully": len(
+                [r for r in results.values() if r.get("status") == "success"]
+            ),
+        },
     }
+
 
 # ---------------------------------------------------------------------------
 # Enhanced Metrics and Observability
 # ---------------------------------------------------------------------------
 
 # Request metrics
-REQUEST_COUNT = Counter('quotadrift_requests_total', 'Total requests', ['method', 'endpoint', 'status'])
-REQUEST_DURATION = Histogram('quotadrift_request_duration_seconds', 'Request duration', ['method', 'endpoint'])
-ACTIVE_REQUESTS = Gauge('quotadrift_active_requests', 'Currently active requests')
+REQUEST_COUNT = Counter(
+    "quotadrift_requests_total", "Total requests", ["method", "endpoint", "status"]
+)
+REQUEST_DURATION = Histogram(
+    "quotadrift_request_duration_seconds", "Request duration", ["method", "endpoint"]
+)
+ACTIVE_REQUESTS = Gauge("quotadrift_active_requests", "Currently active requests")
 
 # Provider metrics
-PROVIDER_REQUESTS = Counter('quotadrift_provider_requests_total', 'Provider requests', ['provider', 'status'])
-PROVIDER_LATENCY = Histogram('quotadrift_provider_latency_seconds', 'Provider response time', ['provider'])
-PROVIDER_TOKENS = Counter('quotadrift_provider_tokens_total', 'Tokens used by provider', ['provider'])
-PROVIDER_ERRORS = Counter('quotadrift_provider_errors_total', 'Provider errors', ['provider', 'error_type'])
+PROVIDER_REQUESTS = Counter(
+    "quotadrift_provider_requests_total", "Provider requests", ["provider", "status"]
+)
+PROVIDER_LATENCY = Histogram(
+    "quotadrift_provider_latency_seconds", "Provider response time", ["provider"]
+)
+PROVIDER_TOKENS = Counter(
+    "quotadrift_provider_tokens_total", "Tokens used by provider", ["provider"]
+)
+PROVIDER_ERRORS = Counter(
+    "quotadrift_provider_errors_total", "Provider errors", ["provider", "error_type"]
+)
 
 # System metrics
-SYSTEM_CPU_USAGE = Gauge('quotadrift_system_cpu_percent', 'System CPU usage')
-SYSTEM_MEMORY_USAGE = Gauge('quotadrift_system_memory_percent', 'System memory usage')
-SYSTEM_DISK_USAGE = Gauge('quotadrift_system_disk_percent', 'System disk usage')
+SYSTEM_CPU_USAGE = Gauge("quotadrift_system_cpu_percent", "System CPU usage")
+SYSTEM_MEMORY_USAGE = Gauge("quotadrift_system_memory_percent", "System memory usage")
+SYSTEM_DISK_USAGE = Gauge("quotadrift_system_disk_percent", "System disk usage")
 
 # Application metrics
-CACHE_HITS = Counter('quotadrift_cache_hits_total', 'Cache hits')
-CACHE_MISSES = Counter('quotadrift_cache_misses_total', 'Cache misses')
-SESSIONS_CREATED = Counter('quotadrift_sessions_created_total', 'Sessions created')
-MESSAGES_PROCESSED = Counter('quotadrift_messages_processed_total', 'Messages processed')
+CACHE_HITS = Counter("quotadrift_cache_hits_total", "Cache hits")
+CACHE_MISSES = Counter("quotadrift_cache_misses_total", "Cache misses")
+SESSIONS_CREATED = Counter("quotadrift_sessions_created_total", "Sessions created")
+MESSAGES_PROCESSED = Counter(
+    "quotadrift_messages_processed_total", "Messages processed"
+)
+
 
 @app.middleware("http")
 async def metrics_middleware(request: Request, call_next):
@@ -796,24 +851,25 @@ async def metrics_middleware(request: Request, call_next):
         REQUEST_COUNT.labels(
             method=request.method,
             endpoint=request.url.path,
-            status=response.status_code
+            status=response.status_code,
         ).inc()
 
         REQUEST_DURATION.labels(
-            method=request.method,
-            endpoint=request.url.path
+            method=request.method, endpoint=request.url.path
         ).observe(duration)
 
         return response
     finally:
         ACTIVE_REQUESTS.dec()
 
+
 # Update system metrics periodically
 def update_system_metrics():
     """Update system-level metrics."""
     SYSTEM_CPU_USAGE.set(psutil.cpu_percent())
     SYSTEM_MEMORY_USAGE.set(psutil.virtual_memory().percent)
-    SYSTEM_DISK_USAGE.set(psutil.disk_usage('/').percent)
+    SYSTEM_DISK_USAGE.set(psutil.disk_usage("/").percent)
+
 
 # Background task to update system metrics
 async def system_metrics_task():
@@ -822,19 +878,19 @@ async def system_metrics_task():
         update_system_metrics()
         await asyncio.sleep(30)
 
+
 @app.get("/metrics")
 async def prometheus_metrics():
     """Prometheus metrics endpoint."""
     # Add system metrics (you could register these as Gauges)
-    return Response(
-        generate_latest(),
-        media_type=CONTENT_TYPE_LATEST
-    )
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
 
 @app.get("/health")
 async def health_check():
     """Basic health check."""
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+
 
 @app.get("/ready")
 async def readiness_check():
@@ -850,13 +906,11 @@ async def readiness_check():
             "status": "ready",
             "timestamp": datetime.utcnow().isoformat(),
             "available_models": len(available),
-            "total_models": len(config.MODEL_LIST)
+            "total_models": len(config.MODEL_LIST),
         }
     except Exception as e:
-        return Response(
-            {"status": "not_ready", "error": str(e)},
-            status_code=503
-        )
+        return Response({"status": "not_ready", "error": str(e)}, status_code=503)
+
 
 # Model status
 # ---------------------------------------------------------------------------
@@ -867,36 +921,44 @@ async def model_status():
 
     # Add quota forecasting
     for model in models:
-        model['quota_forecast'] = calculate_quota_forecast(model)
+        model["quota_forecast"] = calculate_quota_forecast(model)
 
     return {
         "models": models,
         "timestamp": datetime.utcnow().isoformat(),
         "total_models": len(config.MODEL_LIST),
         "available_models": len(model_manager.model_manager.get_available_models()),
-        "quota_limits": get_quota_limits()
+        "quota_limits": get_quota_limits(),
     }
+
 
 def calculate_quota_forecast(model: dict) -> dict:
     """Calculate quota forecast based on usage and known limits."""
-    slot_name = model['slot']
-    model_id = model['model_id']
+    slot_name = model["slot"]
+    model_id = model["model_id"]
 
     # Get provider-specific limits
     limits = get_quota_limits()
     provider = get_provider_from_model(model_id)
-    limit_info = limits.get(provider, {"daily": 14400, "period": "day"})  # Default to Groq
+    limit_info = limits.get(
+        provider, {"daily": 14400, "period": "day"}
+    )  # Default to Groq
 
     # Get current usage from model manager
     metrics = model_manager.model_manager.metrics.get(slot_name)
     if not metrics:
-        return {"remaining": limit_info["daily"], "usage_percent": 0, "forecast": "Available"}
+        return {
+            "remaining": limit_info["daily"],
+            "usage_percent": 0,
+            "forecast": "Available",
+        }
 
     # Calculate usage rate (requests per hour)
     now = datetime.utcnow()
     one_hour_ago = now - timedelta(hours=1)
     recent_requests = sum(
-        1 for success_time in metrics.recent_successes
+        1
+        for success_time in metrics.recent_successes
         if success_time >= one_hour_ago.timestamp()
     )
 
@@ -910,7 +972,9 @@ def calculate_quota_forecast(model: dict) -> dict:
         # For monthly limits, project based on current day of month
         days_in_month = 30  # Approximation
         projected_monthly = recent_requests * days_in_month
-        remaining = max(0, limit_info["daily"] - projected_monthly)  # daily contains monthly limit
+        remaining = max(
+            0, limit_info["daily"] - projected_monthly
+        )  # daily contains monthly limit
         usage_percent = min(100, (projected_monthly / limit_info["daily"]) * 100)
     else:
         remaining = limit_info["daily"]
@@ -932,8 +996,9 @@ def calculate_quota_forecast(model: dict) -> dict:
         "forecast": forecast,
         "period": limit_info["period"],
         "limit": limit_info["daily"],
-        "current_rate": recent_requests
+        "current_rate": recent_requests,
     }
+
 
 def get_provider_from_model(model_id: str) -> str:
     """Extract provider name from model ID."""
@@ -954,17 +1019,19 @@ def get_provider_from_model(model_id: str) -> str:
     else:
         return "unknown"
 
+
 def get_quota_limits() -> dict:
     """Get known quota limits for each provider."""
     return {
-        "groq": {"daily": 14400, "period": "day"},           # 30 req/min * 8 hrs
-        "github": {"daily": 4000, "period": "day"},            # 4,000 req/hr * 1 hr
-        "mistral": {"daily": 1000000000, "period": "month"},    # 1B tokens/month
+        "groq": {"daily": 14400, "period": "day"},  # 30 req/min * 8 hrs
+        "github": {"daily": 4000, "period": "day"},  # 4,000 req/hr * 1 hr
+        "mistral": {"daily": 1000000000, "period": "month"},  # 1B tokens/month
         "siliconflow": {"daily": 20000000, "period": "month"},  # 20M tokens/month
-        "huggingface": {"daily": 10000, "period": "day"},       # ~10k requests/month
-        "cloudflare": {"daily": 10000, "period": "day"},         # 10k requests/day
-        "openrouter": {"daily": 200, "period": "day"},          # Free tier
+        "huggingface": {"daily": 10000, "period": "day"},  # ~10k requests/month
+        "cloudflare": {"daily": 10000, "period": "day"},  # 10k requests/day
+        "openrouter": {"daily": 200, "period": "day"},  # Free tier
     }
+
 
 @app.post("/api/cache/clear")
 async def clear_cache():
@@ -989,6 +1056,7 @@ async def agent_heal(body: AgentHealRequest):
     Run-Fix-Repeat loop.
     Streams status updates and final result.
     """
+
     async def _heal_gen():
         current_code = body.code
         attempts = 0
@@ -1026,7 +1094,7 @@ ERROR:
                 # Use GitHub Models (secondary) for fast fixing
                 ai_fix = await ai_router.chat(
                     messages=[{"role": "user", "content": prompt}],
-                    system="You are a senior debugger. Output only the fixed code."
+                    system="You are a senior debugger. Output only the fixed code.",
                 )
 
                 # Extract code from response (handle markdown backticks)
@@ -1059,6 +1127,7 @@ Return the plan in Markdown format. Use checklists.
 Focus on files involved and changes required.
 Keep it under 20 lines."""
 
+
 @app.post("/api/agent/plan")
 async def agent_plan(body: AgentPlanRequest):
     """Use a frontier model to write a technical plan.md."""
@@ -1066,14 +1135,23 @@ async def agent_plan(body: AgentPlanRequest):
 
     # Use priority_b or a 'frontier' model (defaulting to router's logic)
     result = await ai_router.chat(
-        messages=history + [{"role": "user", "content": f"TASK: {body.task}\n\nWrite a technical plan for this."}],
+        messages=history
+        + [
+            {
+                "role": "user",
+                "content": f"TASK: {body.task}\n\nWrite a technical plan for this.",
+            }
+        ],
         system=PLAN_SYSTEM,
     )
 
     # Save plan as a system message in background
-    memory.save_message(body.session_id, "system", f"PLAN:\n{result['content']}", model="architect")
+    memory.save_message(
+        body.session_id, "system", f"PLAN:\n{result['content']}", model="architect"
+    )
 
     return {"plan": result["content"]}
+
 
 # Health & Forecasting
 # ---------------------------------------------------------------------------
@@ -1087,7 +1165,7 @@ async def api_health_check():
         "uptime_s": int(time.perf_counter()),
         "providers": {},
         "database": "connected",
-        "cache": "connected"
+        "cache": "connected",
     }
 
     # Check provider health
@@ -1096,14 +1174,18 @@ async def api_health_check():
         failing_providers = []
 
         for model in models:
-            provider_name = model.get('display', model.get('slot', 'unknown'))
-            circuit_state = model.get('circuit_state', 'unknown')
-            success_rate = model.get('success_rate', 0)
+            provider_name = model.get("display", model.get("slot", "unknown"))
+            circuit_state = model.get("circuit_state", "unknown")
+            success_rate = model.get("success_rate", 0)
 
             health_status["providers"][provider_name] = {
-                "status": "healthy" if circuit_state == "closed" and success_rate > 0.5 else "degraded",
+                "status": (
+                    "healthy"
+                    if circuit_state == "closed" and success_rate > 0.5
+                    else "degraded"
+                ),
                 "circuit_state": circuit_state,
-                "success_rate": success_rate
+                "success_rate": success_rate,
             }
 
             if circuit_state == "open" or success_rate < 0.5:
@@ -1112,9 +1194,13 @@ async def api_health_check():
         # Overall status based on provider health
         if len(failing_providers) > 0 and len(failing_providers) >= len(models) * 0.5:
             health_status["status"] = "degraded"
-            health_status["message"] = f"Multiple providers failing: {', '.join(failing_providers)}"
+            health_status["message"] = (
+                f"Multiple providers failing: {', '.join(failing_providers)}"
+            )
         elif failing_providers:
-            health_status["message"] = f"Some providers failing: {', '.join(failing_providers)}"
+            health_status["message"] = (
+                f"Some providers failing: {', '.join(failing_providers)}"
+            )
 
     except Exception as e:
         health_status["status"] = "unhealthy"
@@ -1131,6 +1217,7 @@ async def api_health_check():
 
     return health_status
 
+
 @app.get("/api/quota-forecast")
 async def quota_forecast():
     # Known free tier limits
@@ -1139,9 +1226,9 @@ async def quota_forecast():
         "github": 500,
         "mistral": 1000000000,  # 1B tokens/month
         "siliconflow": 20000000,  # 20M tokens
-        "huggingface": 10000,    # ~10k requests/month
-        "cloudflare": 10000,      # 10k requests/day
-        "openrouter": 200,       # common free tier
+        "huggingface": 10000,  # ~10k requests/month
+        "cloudflare": 10000,  # 10k requests/day
+        "openrouter": 200,  # common free tier
     }
 
     stats = {}
@@ -1153,7 +1240,7 @@ async def quota_forecast():
             "limit": limit,
             "used": used,
             "remaining": max(0, limit - used),
-            "percentage": round(min(100, (used / limit) * 100), 1) if limit > 0 else 0
+            "percentage": round(min(100, (used / limit) * 100), 1) if limit > 0 else 0,
         }
     return stats
 
@@ -1171,15 +1258,37 @@ async def index_files(
     Supports any text-based file (py, js, ts, md, json, yaml, etc.)
     """
     ALLOWED_EXT = {
-        ".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".css",
-        ".md", ".json", ".yaml", ".yml", ".toml", ".env",
-        ".sh", ".bash", ".sql", ".txt", ".rs", ".go", ".java",
-        ".c", ".cpp", ".h", ".hpp", ".rb", ".php",
+        ".py",
+        ".js",
+        ".ts",
+        ".jsx",
+        ".tsx",
+        ".html",
+        ".css",
+        ".md",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".env",
+        ".sh",
+        ".bash",
+        ".sql",
+        ".txt",
+        ".rs",
+        ".go",
+        ".java",
+        ".c",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".rb",
+        ".php",
     }
 
     project_id = memory.upsert_project(project_name)
-    indexed    = []
-    skipped    = []
+    indexed = []
+    skipped = []
 
     for f in files:
         ext = Path(f.filename).suffix.lower()
@@ -1195,8 +1304,8 @@ async def index_files(
 
     return {
         "project_id": project_id,
-        "indexed":    indexed,
-        "skipped":    skipped,
+        "indexed": indexed,
+        "skipped": skipped,
     }
 
 

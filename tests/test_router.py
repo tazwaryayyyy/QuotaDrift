@@ -18,7 +18,7 @@ class TestRouterFailover:
     @pytest.fixture
     def mock_router(self):
         """Create a mock router with controlled responses."""
-        with patch('router.get_router') as mock_get_router:
+        with patch("router.get_router") as mock_get_router:
             mock_router_instance = AsyncMock()
             mock_get_router.return_value = mock_router_instance
             yield mock_router_instance
@@ -54,13 +54,10 @@ class TestRouterFailover:
         success_response.usage.total_tokens = 15
 
         # First call fails, second succeeds
-        mock_router.acompletion.side_effect = [
-            rate_limit_error,
-            success_response
-        ]
+        mock_router.acompletion.side_effect = [rate_limit_error, success_response]
 
         # Test chat with retry logic
-        with patch('router._try_mark_error') as mock_mark_error:
+        with patch("router._try_mark_error") as mock_mark_error:
             result = await ai_router.chat([{"role": "user", "content": "test"}])
 
             # Should have retried and succeeded
@@ -112,7 +109,9 @@ class TestRouterFailover:
 
         # Simulate failures
         for i in range(5):  # Exceed failure threshold
-            model_manager.model_manager.record_failure("primary", f"req_{i}", "Test error")
+            model_manager.model_manager.record_failure(
+                "primary", f"req_{i}", "Test error"
+            )
 
         # Should be open now
         assert circuit_breaker.state == "open"
@@ -120,6 +119,7 @@ class TestRouterFailover:
         # Try to get best model - should skip failed provider
         best_model = model_manager.model_manager.get_best_model("test_req")
         assert best_model != "primary"
+
 
 class TestProviderTestEndpoint:
     """Test the /api/provider-test endpoint."""
@@ -132,30 +132,36 @@ class TestProviderTestEndpoint:
         from main import test_providers
 
         # Mock environment variables
-        with patch.dict(os.environ, {
-            'GROQ_API_KEY': 'test_key',
-            'MISTRAL_API_KEY': 'test_key',
-            'SILICONFLOW_API_KEY': 'test_key',
-            'HUGGINGFACE_API_KEY': 'test_key',
-            'CLOUDFLARE_API_KEY': 'test_key',
-            'CLOUDFLARE_ACCOUNT_ID': 'test_account',
-            'OPENROUTER_API_KEY': 'test_key'
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "GROQ_API_KEY": "test_key",
+                "MISTRAL_API_KEY": "test_key",
+                "SILICONFLOW_API_KEY": "test_key",
+                "HUGGINGFACE_API_KEY": "test_key",
+                "CLOUDFLARE_API_KEY": "test_key",
+                "CLOUDFLARE_ACCOUNT_ID": "test_account",
+                "OPENROUTER_API_KEY": "test_key",
+            },
+        ):
             # Mock router responses
-            with patch('main.ai_router.chat') as mock_chat:
+            with patch("main.ai_router.chat") as mock_chat:
                 mock_chat.return_value = {
                     "content": "test",
                     "model_used": "groq/llama-3.3-70b-versatile",
-                    "tokens": 5
+                    "tokens": 5,
                 }
 
                 result = await test_providers()
 
                 assert "results" in result
                 assert "summary" in result
-                assert result["summary"]["total_providers"] == 7  # All providers checked
+                assert (
+                    result["summary"]["total_providers"] == 7
+                )  # All providers checked
                 assert result["results"]["groq"]["status"] == "success"
                 assert result["results"]["mistral"]["status"] == "success"
+
 
 class TestModelManagerIntegration:
     """Test model manager integration with router."""
@@ -205,7 +211,16 @@ class TestModelManagerIntegration:
 
         # Should include all configured providers
         provider_names = [item["slot"] for item in snapshot]
-        expected_providers = ["primary", "secondary", "tertiary", "quaternary", "siliconflow", "huggingface", "cloudflare", "fallback"]
+        expected_providers = [
+            "primary",
+            "secondary",
+            "tertiary",
+            "quaternary",
+            "siliconflow",
+            "huggingface",
+            "cloudflare",
+            "fallback",
+        ]
 
         for provider in expected_providers:
             assert provider in provider_names
@@ -215,6 +230,7 @@ class TestModelManagerIntegration:
             assert "score" in item
             assert "success_rate" in item
             assert "circuit_state" in item
+
 
 class TestStreamingEvents:
     """Test streaming event format and SSE compliance."""
@@ -233,14 +249,16 @@ class TestStreamingEvents:
         mock_async_iter = AsyncMock()
         mock_async_iter.__aiter__ = AsyncMock(return_value=iter(chunks))
 
-        with patch('router.get_router') as mock_get_router:
+        with patch("router.get_router") as mock_get_router:
             mock_router_instance = AsyncMock()
             mock_router_instance.acompletion.return_value = mock_async_iter
             mock_get_router.return_value = mock_router_instance
 
             # Collect events
             events = []
-            async for event in ai_router.stream_chat([{"role": "user", "content": "test"}]):
+            async for event in ai_router.stream_chat(
+                [{"role": "user", "content": "test"}]
+            ):
                 events.append(event)
 
             # Verify event structure
@@ -252,6 +270,7 @@ class TestStreamingEvents:
             # Final event should be 'done'
             assert events[-1]["type"] == "done"
             assert "model" in events[-1]
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

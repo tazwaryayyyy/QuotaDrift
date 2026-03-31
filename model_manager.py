@@ -26,31 +26,39 @@ try:
 except ImportError:
     # Fallback dummy metrics for testing
     class DummyMetric:
-        def labels(self, **kwargs): return self
-        def inc(self): pass
-        def observe(self, value): pass
+        def labels(self, **kwargs):
+            return self
+
+        def inc(self):
+            pass
+
+        def observe(self, value):
+            pass
+
     MODEL_REQUESTS = DummyMetric()
     MODEL_LATENCY = DummyMetric()
     TOKEN_USAGE = DummyMetric()
 
 # Configure structured logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("model_manager")
+
 
 @dataclass
 class CircuitBreakerConfig:
     """Circuit breaker configuration per model."""
-    failure_threshold: int = 3      # Failures before opening
-    recovery_timeout: int = 300    # Seconds before trying recovery
-    half_open_max_calls: int = 2    # Max calls in half-open state
+
+    failure_threshold: int = 3  # Failures before opening
+    recovery_timeout: int = 300  # Seconds before trying recovery
+    half_open_max_calls: int = 2  # Max calls in half-open state
 
 
 @dataclass
 class ModelMetrics:
     """Detailed metrics for each model."""
+
     model_id: str
     slot_name: str
 
@@ -126,7 +134,9 @@ class CircuitBreaker:
                 self.next_attempt_time = datetime.utcnow() + timedelta(
                     seconds=self.config.recovery_timeout
                 )
-                logger.warning(f"Circuit breaker opened after {self.failure_count} failures")
+                logger.warning(
+                    f"Circuit breaker opened after {self.failure_count} failures"
+                )
         elif self.state == "half_open":
             self.state = "open"
             self.next_attempt_time = datetime.utcnow() + timedelta(
@@ -161,7 +171,7 @@ class ModelManager:
             self.metrics[slot_name] = ModelMetrics(
                 model_id=model_id,
                 slot_name=slot_name,
-                priority_score=self._get_priority_score(slot_name)
+                priority_score=self._get_priority_score(slot_name),
             )
 
     def _get_priority_score(self, slot_name: str) -> float:
@@ -172,7 +182,7 @@ class ModelManager:
             "secondary": 0.8,
             "tertiary": 0.7,
             "quaternary": 0.6,
-            "fallback": 0.5
+            "fallback": 0.5,
         }
         return priority_map.get(slot_name, 0.5)
 
@@ -189,7 +199,10 @@ class ModelManager:
 
             # Check rate limits
             if metrics.rate_limit_remaining == 0:
-                if metrics.rate_limit_reset and datetime.utcnow() < metrics.rate_limit_reset:
+                if (
+                    metrics.rate_limit_reset
+                    and datetime.utcnow() < metrics.rate_limit_reset
+                ):
                     continue
 
             available.append(slot_name)
@@ -214,11 +227,15 @@ class ModelManager:
         scored_models.sort(reverse=True)
 
         best_model = scored_models[0][1]
-        logger.info(f"Selected model {best_model} with score {scored_models[0][2]:.3f} for request {request_id}")
+        logger.info(
+            f"Selected model {best_model} with score {scored_models[0][2]:.3f} for request {request_id}"
+        )
 
         return best_model
 
-    def _calculate_model_score(self, slot_name: str) -> tuple[float, float, float, float]:
+    def _calculate_model_score(
+        self, slot_name: str
+    ) -> tuple[float, float, float, float]:
         """Calculate comprehensive score for a model."""
         metrics = self.metrics[slot_name]
 
@@ -236,10 +253,10 @@ class ModelManager:
 
         # Weighted combination
         total_score = (
-            success_score * 0.4 +
-            latency_score * 0.3 +
-            load_score * 0.2 +
-            priority_score * 0.1
+            success_score * 0.4
+            + latency_score * 0.3
+            + load_score * 0.2
+            + priority_score * 0.1
         )
 
         return total_score, success_score, latency_score, load_score
@@ -280,7 +297,7 @@ class ModelManager:
         metrics.recent_latencies.append(latency_ms)
 
         # Update Prometheus metrics
-        MODEL_REQUESTS.labels(model=metrics.model_id, status='success').inc()
+        MODEL_REQUESTS.labels(model=metrics.model_id, status="success").inc()
         MODEL_LATENCY.labels(model=metrics.model_id).observe(latency_ms / 1000.0)
         if tokens > 0:
             TOKEN_USAGE.labels(model=metrics.model_id).inc(tokens)
@@ -291,7 +308,9 @@ class ModelManager:
         # Clean up trace
         del self.request_traces[request_id]
 
-        logger.info(f"Request {request_id} completed successfully in {latency_ms:.1f}ms")
+        logger.info(
+            f"Request {request_id} completed successfully in {latency_ms:.1f}ms"
+        )
 
     def record_failure(self, slot_name: str, request_id: str, error: str):
         """Record a failed request."""
@@ -309,7 +328,7 @@ class ModelManager:
         metrics.recent_failures.append(end_time)
 
         # Update Prometheus metrics
-        MODEL_REQUESTS.labels(model=metrics.model_id, status='error').inc()
+        MODEL_REQUESTS.labels(model=metrics.model_id, status="error").inc()
 
         # Update rolling averages
         self._update_metrics(slot_name)
@@ -319,14 +338,18 @@ class ModelManager:
 
         logger.error(f"Request {request_id} failed on model {slot_name}: {error}")
 
-    def update_rate_limit(self, slot_name: str, remaining: int | None, reset: str | None):
+    def update_rate_limit(
+        self, slot_name: str, remaining: int | None, reset: str | None
+    ):
         """Update rate limit information."""
         metrics = self.metrics[slot_name]
         metrics.rate_limit_remaining = remaining
 
         if reset:
             try:
-                metrics.rate_limit_reset = datetime.fromisoformat(reset.replace('Z', '+00:00'))
+                metrics.rate_limit_reset = datetime.fromisoformat(
+                    reset.replace("Z", "+00:00")
+                )
             except Exception:
                 pass
 
@@ -341,13 +364,16 @@ class ModelManager:
 
         # Calculate average latency
         if metrics.recent_latencies:
-            metrics.avg_latency_ms = sum(metrics.recent_latencies) / len(metrics.recent_latencies)
+            metrics.avg_latency_ms = sum(metrics.recent_latencies) / len(
+                metrics.recent_latencies
+            )
 
         # Calculate load score (requests per minute)
         now = datetime.utcnow()
         one_minute_ago = now - timedelta(minutes=1)
         recent_requests = sum(
-            1 for success_time in metrics.recent_successes
+            1
+            for success_time in metrics.recent_successes
             if success_time >= one_minute_ago.timestamp()
         )
         metrics.load_score = min(1.0, recent_requests / 10.0)  # Normalize to 0-1
@@ -376,7 +402,8 @@ class ModelManager:
             try:
                 now = time.monotonic()
                 expired = [
-                    req_id for req_id, trace in self.request_traces.items()
+                    req_id
+                    for req_id, trace in self.request_traces.items()
                     if now - trace["start_time"] > 300  # 5 minutes
                 ]
 
@@ -405,22 +432,32 @@ class ModelManager:
             else:
                 status = "available"
 
-            snapshot.append({
-                "id": slot_name,
-                "model_id": metrics.model_id,
-                "display": config.MODEL_DISPLAY.get(metrics.model_id, metrics.model_id),
-                "color": config.MODEL_COLORS.get(metrics.model_id, "#94a3b8"),
-                "status": status,
-                "circuit_state": cb.state,
-                "requests": metrics.total_requests,
-                "errors": metrics.total_errors,
-                "success_rate": metrics.success_rate,
-                "avg_latency_ms": metrics.avg_latency_ms,
-                "last_used": metrics.last_used.isoformat() if metrics.last_used else None,
-                "rate_limit_remaining": metrics.rate_limit_remaining,
-                "rate_limit_reset": metrics.rate_limit_reset.isoformat() if metrics.rate_limit_reset else None,
-                "score": self._calculate_model_score(slot_name)[0],
-            })
+            snapshot.append(
+                {
+                    "id": slot_name,
+                    "model_id": metrics.model_id,
+                    "display": config.MODEL_DISPLAY.get(
+                        metrics.model_id, metrics.model_id
+                    ),
+                    "color": config.MODEL_COLORS.get(metrics.model_id, "#94a3b8"),
+                    "status": status,
+                    "circuit_state": cb.state,
+                    "requests": metrics.total_requests,
+                    "errors": metrics.total_errors,
+                    "success_rate": metrics.success_rate,
+                    "avg_latency_ms": metrics.avg_latency_ms,
+                    "last_used": (
+                        metrics.last_used.isoformat() if metrics.last_used else None
+                    ),
+                    "rate_limit_remaining": metrics.rate_limit_remaining,
+                    "rate_limit_reset": (
+                        metrics.rate_limit_reset.isoformat()
+                        if metrics.rate_limit_reset
+                        else None
+                    ),
+                    "score": self._calculate_model_score(slot_name)[0],
+                }
+            )
 
         return snapshot
 
@@ -428,9 +465,11 @@ class ModelManager:
 # Global model manager instance
 model_manager = ModelManager()
 
+
 def get_request_id() -> str:
     """Generate a unique request ID."""
     return str(uuid.uuid4())
+
 
 @lru_cache(maxsize=128)
 def get_model_color(model_id: str) -> str:

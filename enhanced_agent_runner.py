@@ -21,24 +21,29 @@ from dataclasses import dataclass
 
 logger = logging.getLogger("agent_runner")
 
+
 @dataclass
 class SandboxConfig:
     """Sandbox configuration for code execution."""
-    timeout: int = 10                    # Execution timeout in seconds
-    memory_limit: str = "128m"            # Memory limit
-    cpu_limit: str = "0.5"               # CPU limit
-    network_access: bool = False             # Network access
-    temp_dir_size: str = "10m"            # Temp directory size limit
+
+    timeout: int = 10  # Execution timeout in seconds
+    memory_limit: str = "128m"  # Memory limit
+    cpu_limit: str = "0.5"  # CPU limit
+    network_access: bool = False  # Network access
+    temp_dir_size: str = "10m"  # Temp directory size limit
+
 
 @dataclass
 class ExecutionResult:
     """Result of code execution."""
+
     stdout: str
     stderr: str
     exit_code: int
     execution_time: float
     language: str
     error: str | None = None
+
 
 class LanguageConfig:
     """Configuration for supported programming languages."""
@@ -56,7 +61,7 @@ RUN chmod +x main.py
 CMD ["python", "main.py"]
             """.strip(),
             "files": ["main.py", "requirements.txt"],
-            "entrypoint": "python main.py"
+            "entrypoint": "python main.py",
         },
         "javascript": {
             "extensions": [".js"],
@@ -70,7 +75,7 @@ RUN chmod +x main.js
 CMD ["node", "main.js"]
             """.strip(),
             "files": ["main.js", "package.json"],
-            "entrypoint": "node main.js"
+            "entrypoint": "node main.js",
         },
         "go": {
             "extensions": [".go"],
@@ -85,7 +90,7 @@ RUN chmod +x main
 CMD ["./main"]
             """.strip(),
             "files": ["main.go"],
-            "entrypoint": "./main"
+            "entrypoint": "./main",
         },
         "rust": {
             "extensions": [".rs"],
@@ -99,7 +104,7 @@ RUN chmod +x target/release/main
 CMD ["./target/release/main"]
             """.strip(),
             "files": ["main.rs", "Cargo.toml"],
-            "entrypoint": "./target/release/main"
+            "entrypoint": "./target/release/main",
         },
         "java": {
             "extensions": [".java"],
@@ -111,7 +116,7 @@ RUN javac Main.java
 CMD ["java", "Main"]
             """.strip(),
             "files": ["Main.java"],
-            "entrypoint": "java Main"
+            "entrypoint": "java Main",
         },
         "cpp": {
             "extensions": [".cpp"],
@@ -124,9 +129,10 @@ RUN chmod +x main
 CMD ["./main"]
             """.strip(),
             "files": ["main.cpp"],
-            "entrypoint": "./main"
-        }
+            "entrypoint": "./main",
+        },
     }
+
 
 class EnhancedAgentRunner:
     """Enhanced agent runner with Docker sandboxing."""
@@ -148,7 +154,9 @@ class EnhancedAgentRunner:
 
         if code_lower.startswith("def ") or "import " in code_lower:
             return "python"
-        elif "function " in code_lower or "const " in code_lower or "let " in code_lower:
+        elif (
+            "function " in code_lower or "const " in code_lower or "let " in code_lower
+        ):
             return "javascript"
         elif "package main" in code_lower or "func " in code_lower:
             return "go"
@@ -161,16 +169,21 @@ class EnhancedAgentRunner:
 
         return "python"  # Default fallback
 
-    async def run_code(self, code: str, language: str | None,
-                    filename: str | None = None) -> ExecutionResult:
+    async def run_code(
+        self, code: str, language: str | None, filename: str | None = None
+    ) -> ExecutionResult:
         """Execute code in a Docker sandbox."""
         if not language:
             language = self.detect_language(code, filename)
 
         if language not in LanguageConfig.LANGUAGES:
             return ExecutionResult(
-                stdout="", stderr="", exit_code=1, execution_time=0,
-                language=language, error=f"Language '{language}' not supported"
+                stdout="",
+                stderr="",
+                exit_code=1,
+                execution_time=0,
+                language=language,
+                error=f"Language '{language}' not supported",
             )
 
         try:
@@ -190,25 +203,31 @@ class EnhancedAgentRunner:
         except Exception as e:
             logger.error(f"Error executing {language} code: {e}")
             return ExecutionResult(
-                stdout="", stderr="", exit_code=1, execution_time=0,
-                language=language, error=str(e)
+                stdout="",
+                stderr="",
+                exit_code=1,
+                execution_time=0,
+                language=language,
+                error=str(e),
             )
         finally:
             # Cleanup
             try:
                 import shutil
+
                 shutil.rmtree(work_dir, ignore_errors=True)
             except Exception:
                 pass
 
-    async def _prepare_files(self, work_dir: str, code: str, language: str,
-                           filename: str | None = None):
+    async def _prepare_files(
+        self, work_dir: str, code: str, language: str, filename: str | None = None
+    ):
         """Prepare source files for execution."""
         lang_config = LanguageConfig.LANGUAGES[language]
 
         # Write main source file
         main_file = os.path.join(work_dir, "main" + lang_config["extensions"][0])
-        with open(main_file, 'w', encoding='utf-8') as f:
+        with open(main_file, "w", encoding="utf-8") as f:
             f.write(code)
 
         # Create additional files if needed
@@ -216,7 +235,7 @@ class EnhancedAgentRunner:
             if file_template == "main.py" and language == "python":
                 # Create requirements.txt for Python
                 req_file = os.path.join(work_dir, "requirements.txt")
-                with open(req_file, 'w') as f:
+                with open(req_file, "w") as f:
                     f.write("requests\nnumpy\npandas")  # Common packages
             elif file_template == "package.json" and language == "javascript":
                 # Create package.json for Node.js
@@ -224,9 +243,9 @@ class EnhancedAgentRunner:
                 package_json = {
                     "name": "sandbox-code",
                     "version": "1.0.0",
-                    "dependencies": {}
+                    "dependencies": {},
                 }
-                with open(pkg_file, 'w') as f:
+                with open(pkg_file, "w") as f:
                     json.dump(package_json, f, indent=2)
             elif file_template == "Cargo.toml" and language == "rust":
                 # Create Cargo.toml for Rust
@@ -239,7 +258,7 @@ edition = "2021"
 
 [dependencies]
                 """.strip()
-                with open(cargo_file, 'w') as f:
+                with open(cargo_file, "w") as f:
                     f.write(cargo_toml)
 
     async def _run_in_docker(self, work_dir: str, language: str) -> ExecutionResult:
@@ -251,15 +270,11 @@ edition = "2021"
 
         # Create Dockerfile
         dockerfile_path = os.path.join(work_dir, "Dockerfile")
-        with open(dockerfile_path, 'w') as f:
+        with open(dockerfile_path, "w") as f:
             f.write(lang_config["dockerfile"])
 
         # Build Docker image
-        build_cmd = [
-            "docker", "build",
-            "-t", container_name,
-            work_dir
-        ]
+        build_cmd = ["docker", "build", "-t", container_name, work_dir]
 
         try:
             build_result = subprocess.run(
@@ -267,34 +282,47 @@ edition = "2021"
             )
             if build_result.returncode != 0:
                 return ExecutionResult(
-                    stdout="", stderr=build_result.stderr, exit_code=1,
-                    execution_time=0, language=language,
-                    error=f"Docker build failed: {build_result.stderr}"
+                    stdout="",
+                    stderr=build_result.stderr,
+                    exit_code=1,
+                    execution_time=0,
+                    language=language,
+                    error=f"Docker build failed: {build_result.stderr}",
                 )
         except subprocess.TimeoutExpired:
             return ExecutionResult(
-                stdout="", stderr="", exit_code=1, execution_time=0,
-                language=language, error="Docker build timed out"
+                stdout="",
+                stderr="",
+                exit_code=1,
+                execution_time=0,
+                language=language,
+                error="Docker build timed out",
             )
 
         # Run container with resource limits
         run_cmd = [
-            "docker", "run", "--rm",
-            "--name", container_name,
-            "--memory", self.config.memory_limit,
-            "--cpus", self.config.cpu_limit,
-            "--network", "none" if not self.config.network_access else "bridge",
-            "-v", f"{work_dir}:/code:ro",
+            "docker",
+            "run",
+            "--rm",
+            "--name",
             container_name,
-            lang_config["entrypoint"]
+            "--memory",
+            self.config.memory_limit,
+            "--cpus",
+            self.config.cpu_limit,
+            "--network",
+            "none" if not self.config.network_access else "bridge",
+            "-v",
+            f"{work_dir}:/code:ro",
+            container_name,
+            lang_config["entrypoint"],
         ]
 
         start_time = time.time()
 
         try:
             result = subprocess.run(
-                run_cmd, capture_output=True, text=True,
-                timeout=self.config.timeout
+                run_cmd, capture_output=True, text=True, timeout=self.config.timeout
             )
             execution_time = time.time() - start_time
 
@@ -303,21 +331,28 @@ edition = "2021"
                 stderr=result.stderr,
                 exit_code=result.returncode,
                 execution_time=execution_time,
-                language=language
+                language=language,
             )
 
         except subprocess.TimeoutExpired:
             # Kill the container
             subprocess.run(["docker", "kill", container_name], capture_output=True)
             return ExecutionResult(
-                stdout="", stderr="", exit_code=124, execution_time=self.config.timeout,
-                language=language, error=f"Execution timed out after {self.config.timeout} seconds"
+                stdout="",
+                stderr="",
+                exit_code=124,
+                execution_time=self.config.timeout,
+                language=language,
+                error=f"Execution timed out after {self.config.timeout} seconds",
             )
 
         finally:
             # Clean up Docker image
-            subprocess.run(["docker", "rmi", container_name],
-                        capture_output=True, ignore_errors=True)
+            subprocess.run(
+                ["docker", "rmi", container_name],
+                capture_output=True,
+                ignore_errors=True,
+            )
 
     def get_supported_languages(self) -> list[str]:
         """Get list of supported programming languages."""
@@ -333,16 +368,18 @@ edition = "2021"
             "language": language,
             "extensions": config["extensions"],
             "supported": True,
-            "has_package_manager": language in ["python", "javascript", "rust", "go"]
+            "has_package_manager": language in ["python", "javascript", "rust", "go"],
         }
 
     def cleanup(self):
         """Clean up temporary directories."""
         try:
             import shutil
+
             shutil.rmtree(self.temp_dir, ignore_errors=True)
         except Exception:
             pass
+
 
 # Fallback for systems without Docker
 class SimpleAgentRunner:
@@ -350,18 +387,24 @@ class SimpleAgentRunner:
 
     def __init__(self):
         import agent_runner  # Import original runner
+
         self.fallback_runner = agent_runner
 
-    async def run_code(self, code: str, language: str | None,
-                    filename: str | None = None) -> ExecutionResult:
+    async def run_code(
+        self, code: str, language: str | None, filename: str | None = None
+    ) -> ExecutionResult:
         """Fallback to simple subprocess execution."""
         if not language:
             language = self.detect_language(code, filename)
 
         if language not in ["python", "javascript"]:
             return ExecutionResult(
-                stdout="", stderr="", exit_code=1, execution_time=0,
-                language=language, error=f"Language '{language}' not supported without Docker"
+                stdout="",
+                stderr="",
+                exit_code=1,
+                execution_time=0,
+                language=language,
+                error=f"Language '{language}' not supported without Docker",
             )
 
         # Use original runner for Python and JavaScript
@@ -373,7 +416,7 @@ class SimpleAgentRunner:
             exit_code=result.get("exit_code", 1),
             execution_time=0,  # Not tracked in original
             language=language,
-            error=result.get("error")
+            error=result.get("error"),
         )
 
     def detect_language(self, code: str, filename: str | None = None) -> str:
@@ -392,8 +435,10 @@ class SimpleAgentRunner:
             return "javascript"
         return "python"
 
+
 # Global runner instance
 _runner_instance = None
+
 
 def get_runner() -> EnhancedAgentRunner:
     """Get the appropriate runner instance."""

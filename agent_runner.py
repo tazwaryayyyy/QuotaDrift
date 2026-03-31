@@ -15,6 +15,7 @@ def run_code(code: str, language: str, timeout: int = 5) -> dict:
     else:
         return {"error": f"Language '{language}' not supported."}
 
+
 def _run_python(code: str, timeout: int) -> dict:
     with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as tmp:
         tmp.write(code.encode("utf-8"))
@@ -39,6 +40,7 @@ def _run_python(code: str, timeout: int) -> dict:
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+
 
 def _run_javascript(code: str, timeout: int) -> dict:
     # Check if node is installed

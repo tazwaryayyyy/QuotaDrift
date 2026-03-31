@@ -17,8 +17,8 @@ from sentence_transformers import SentenceTransformer
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-BASE_DIR  = Path(__file__).parent
-DB_PATH   = BASE_DIR / "switchboard.db"
+BASE_DIR = Path(__file__).parent
+DB_PATH = BASE_DIR / "switchboard.db"
 CHROMA_DIR = BASE_DIR / "chroma_store"
 
 # ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@ CHROMA_DIR = BASE_DIR / "chroma_store"
 # ---------------------------------------------------------------------------
 _embedder: SentenceTransformer | None = None
 _chroma_col = None
-_hybrid_searchers: dict[int, "HybridSearcher"] = {} # project_id -> HybridSearcher
+_hybrid_searchers: dict[int, "HybridSearcher"] = {}  # project_id -> HybridSearcher
 
 
 def _get_embedder() -> SentenceTransformer:
@@ -52,15 +52,15 @@ class HybridSearcher:
     def __init__(self, project_id: int):
         self.project_id = project_id
         self._corpus: list[str] = []
-        self._meta:   list[dict] = []
-        self._bm25:   BM25Okapi | None = None
+        self._meta: list[dict] = []
+        self._bm25: BM25Okapi | None = None
         self._load_from_db()
 
     def _load_from_db(self):
         with sqlite3.connect(DB_PATH) as conn:
             rows = conn.execute(
                 "SELECT filename, content FROM project_files WHERE project_id=?",
-                (self.project_id,)
+                (self.project_id,),
             ).fetchall()
             for filename, content in rows:
                 self.add_local(content, {"filename": filename})
@@ -68,16 +68,19 @@ class HybridSearcher:
     def add_local(self, text: str, meta: dict):
         self._corpus.append(text)
         self._meta.append(meta)
-        tokenized_corpus = [re.findall(r'\w+', d.lower()) for d in self._corpus]
+        tokenized_corpus = [re.findall(r"\w+", d.lower()) for d in self._corpus]
         self._bm25 = BM25Okapi(tokenized_corpus)
 
     def search(self, query: str, n: int = 5) -> list[dict]:
         if not self._bm25:
             return []
-        tokens = re.findall(r'\w+', query.lower())
+        tokens = re.findall(r"\w+", query.lower())
         scores = self._bm25.get_scores(tokens)
         top_idx = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:n]
-        return [{"text": self._corpus[i], "meta": self._meta[i], "score": scores[i]} for i in top_idx]
+        return [
+            {"text": self._corpus[i], "meta": self._meta[i], "score": scores[i]}
+            for i in top_idx
+        ]
 
 
 def _get_hybrid_searcher(project_id: int) -> HybridSearcher:
@@ -142,9 +145,7 @@ def upsert_project(name: str, description: str = "") -> int:
             "INSERT OR IGNORE INTO projects (name, description, created_at) VALUES (?,?,?)",
             (name, description, _now()),
         )
-        row = conn.execute(
-            "SELECT id FROM projects WHERE name=?", (name,)
-        ).fetchone()
+        row = conn.execute("SELECT id FROM projects WHERE name=?", (name,)).fetchone()
         return row[0]
 
 
@@ -153,7 +154,10 @@ def list_projects() -> list[dict]:
         rows = conn.execute(
             "SELECT id, name, description, created_at FROM projects ORDER BY id DESC"
         ).fetchall()
-    return [{"id": r[0], "name": r[1], "description": r[2], "created_at": r[3]} for r in rows]
+    return [
+        {"id": r[0], "name": r[1], "description": r[2], "created_at": r[3]}
+        for r in rows
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -230,8 +234,14 @@ def list_sessions(project_id: int | None = None) -> list[dict]:
                    ORDER BY s.updated_at DESC LIMIT 50"""
             ).fetchall()
     return [
-        {"id": r[0], "title": r[1], "created_at": r[2],
-         "updated_at": r[3], "last_model": r[4], "project_name": r[5]}
+        {
+            "id": r[0],
+            "title": r[1],
+            "created_at": r[2],
+            "updated_at": r[3],
+            "last_model": r[4],
+            "project_name": r[5],
+        }
         for r in rows
     ]
 
@@ -262,12 +272,14 @@ def save_message(
                 documents=[content],
                 embeddings=[vec],
                 ids=[f"msg_{msg_id}"],
-                metadatas=[{
-                    "session_id": session_id,
-                    "role": role,
-                    "model": model,
-                    "timestamp": ts,
-                }],
+                metadatas=[
+                    {
+                        "session_id": session_id,
+                        "role": role,
+                        "model": model,
+                        "timestamp": ts,
+                    }
+                ],
             )
         except Exception:
             pass  # Never crash on embedding failure
@@ -282,7 +294,13 @@ def get_messages(session_id: int) -> list[dict]:
             (session_id,),
         ).fetchall()
     return [
-        {"role": r[0], "content": r[1], "model": r[2], "tokens": r[3], "timestamp": r[4]}
+        {
+            "role": r[0],
+            "content": r[1],
+            "model": r[2],
+            "tokens": r[3],
+            "timestamp": r[4],
+        }
         for r in rows
     ]
 
@@ -310,15 +328,17 @@ def semantic_search(query: str, session_id: int, n: int = 3) -> list[str]:
         return []
 
 
-def hybrid_search_rrf(query: str, project_id: int, session_id: int, n: int = 4) -> list[str]:
+def hybrid_search_rrf(
+    query: str, project_id: int, session_id: int, n: int = 4
+) -> list[str]:
     """
     Reciprocal Rank Fusion of vector search + BM25 for file RAG.
     """
     # 1. Vector results from files
-    vec_results = search_project_files(query, project_id, n=n*2)
+    vec_results = search_project_files(query, project_id, n=n * 2)
 
     # 2. BM25 results from files
-    bm25_results = _get_hybrid_searcher(project_id).search(query, n=n*2)
+    bm25_results = _get_hybrid_searcher(project_id).search(query, n=n * 2)
     bm25_texts = [r["text"] for r in bm25_results]
 
     # 3. RRF Scoring
@@ -335,6 +355,7 @@ REWRITE_SYSTEM = """You are a search query optimizer for a code RAG system.
 Rewrite the user's question into a precise search query that will retrieve the most relevant code snippets.
 Return ONLY the rewritten query, nothing else. Max 15 words."""
 
+
 async def rewrite_query(user_message: str, chat_fn) -> str:
     try:
         result = await chat_fn(
@@ -350,7 +371,8 @@ SUMMARIZE_SYSTEM = """Summarize this conversation segment into 3-5 bullet points
 Focus on: decisions made, code written, errors encountered, current status.
 Be extremely concise. Output ONLY the bullets, no preamble."""
 
-async def compress_old_messages(session_id: int, keep_recent: int = 10, chat_fn = None):
+
+async def compress_old_messages(session_id: int, keep_recent: int = 10, chat_fn=None):
     """Summarize messages older than the last N, replace them with a summary."""
     if not chat_fn:
         return
@@ -358,14 +380,14 @@ async def compress_old_messages(session_id: int, keep_recent: int = 10, chat_fn 
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
             "SELECT id, role, content FROM messages WHERE session_id=? ORDER BY id",
-            (session_id,)
+            (session_id,),
         ).fetchall()
 
     msgs = [{"id": r[0], "role": r[1], "content": r[2]} for r in rows]
     if len(msgs) <= keep_recent + 5:
         return
 
-    old  = msgs[:-keep_recent]
+    old = msgs[:-keep_recent]
 
     convo_text = "\n".join(f"{m['role'].upper()}: {m['content'][:300]}" for m in old)
     result = await chat_fn(
@@ -378,11 +400,17 @@ async def compress_old_messages(session_id: int, keep_recent: int = 10, chat_fn 
         old_ids = [m["id"] for m in old]
         conn.execute(
             f"DELETE FROM messages WHERE id IN ({','.join('?' for _ in old_ids)})",
-            old_ids
+            old_ids,
         )
         conn.execute(
             "INSERT INTO messages (session_id, role, content, model, timestamp) VALUES (?,?,?,?,?)",
-            (session_id, "system", f"[COMPRESSED HISTORY]\n{summary}", "summarizer", _now())
+            (
+                session_id,
+                "system",
+                f"[COMPRESSED HISTORY]\n{summary}",
+                "summarizer",
+                _now(),
+            ),
         )
 
 
@@ -395,6 +423,7 @@ def delete_last_n_messages(session_id: int, n: int):
             "DELETE FROM messages WHERE id IN (SELECT id FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?)",
             (session_id, n),
         )
+
 
 # ---------------------------------------------------------------------------
 # Project files (codebase indexing)
@@ -420,7 +449,9 @@ def index_file(project_id: int, filename: str, content: str):
             documents=[f"FILE: {filename}\n{content}"],
             embeddings=[vec],
             ids=[doc_id],
-            metadatas=[{"project_id": project_id, "filename": filename, "type": "file"}],
+            metadatas=[
+                {"project_id": project_id, "filename": filename, "type": "file"}
+            ],
         )
     except Exception:
         pass
@@ -441,13 +472,17 @@ def search_project_files(query: str, project_id: int, n: int = 3) -> list[str]:
 
 def has_project_files(project_id: int) -> bool:
     with sqlite3.connect(DB_PATH) as conn:
-        row = conn.execute("SELECT 1 FROM project_files WHERE project_id=? LIMIT 1", (project_id,)).fetchone()
+        row = conn.execute(
+            "SELECT 1 FROM project_files WHERE project_id=? LIMIT 1", (project_id,)
+        ).fetchone()
         return row is not None
 
 
 def get_project_id_for_session(session_id: int) -> int:
     with sqlite3.connect(DB_PATH) as conn:
-        row = conn.execute("SELECT project_id FROM sessions WHERE id=?", (session_id,)).fetchone()
+        row = conn.execute(
+            "SELECT project_id FROM sessions WHERE id=?", (session_id,)
+        ).fetchone()
         return row[0] if row else 0
 
 

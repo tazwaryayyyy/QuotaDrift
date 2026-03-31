@@ -76,8 +76,8 @@ async def compile_state(messages: list[dict], chat_fn) -> dict:
     except json.JSONDecodeError:
         # Graceful degradation — return whatever we got as a raw summary
         return {
-            "project_goal":  "Could not parse structured state",
-            "raw_summary":   raw,
-            "current_task":  "Unknown — see raw_summary",
-            "last_action":   "Unknown — see raw_summary",
+            "project_goal": "Could not parse structured state",
+            "raw_summary": raw,
+            "current_task": "Unknown — see raw_summary",
+            "last_action": "Unknown — see raw_summary",
         }
