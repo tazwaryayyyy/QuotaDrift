@@ -95,7 +95,9 @@ def setup_logging():
 
     # File handler with rotation (10MB max, keep 5 files)
     file_handler = logging.handlers.RotatingFileHandler(
-        "quotadrift.log", maxBytes=10 * 1024 * 1024, backupCount=5  # 10MB
+        "quotadrift.log",
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,  # 10MB
     )
     file_handler.setFormatter(json_formatter)
 
@@ -773,9 +775,9 @@ async def test_providers():
             }
             if provider == "cloudflare" and not os.getenv("CLOUDFLARE_ACCOUNT_ID"):
                 results[provider]["status"] = "incomplete"
-                results[provider][
-                    "message"
-                ] = f"{display_name} API key present but missing ACCOUNT_ID"
+                results[provider]["message"] = (
+                    f"{display_name} API key present but missing ACCOUNT_ID"
+                )
         else:
             results[provider] = {
                 "status": "no_key",
