@@ -1,7 +1,8 @@
-import json
-import numpy as np
 from datetime import datetime
+
+import numpy as np
 from sentence_transformers import SentenceTransformer
+
 
 class SemanticCache:
     def __init__(self, threshold: float = 0.92):
@@ -16,21 +17,21 @@ class SemanticCache:
         self.total_queries += 1
         if not self._store:
             return None
-        
+
         q_vec = self._embedder.encode(query)
         best_score = -1
         best_item  = None
-        
+
         for item in self._store:
             # Cosine similarity: (A . B) / (||A|| * ||B||)
             norm_q = np.linalg.norm(q_vec)
             norm_i = np.linalg.norm(item["vec"])
             score = float(np.dot(q_vec, item["vec"]) / (norm_q * norm_i + 1e-8))
-            
+
             if score > best_score:
                 best_score = score
                 best_item  = item
-        
+
         if best_score >= self._threshold:
             self.hits += 1
             return {

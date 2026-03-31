@@ -9,21 +9,20 @@ Features:
 - Structured logging with request tracing
 """
 
+import asyncio
+import logging
 import time
 import uuid
-import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, field
 from collections import deque
-import asyncio
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from functools import lru_cache
 
 import config
 
 # Import metrics (will be imported after main.py initializes them)
 try:
-    from main import MODEL_REQUESTS, MODEL_LATENCY, TOKEN_USAGE
+    from main import MODEL_LATENCY, MODEL_REQUESTS, TOKEN_USAGE
 except ImportError:
     # Fallback dummy metrics for testing
     class DummyMetric:
@@ -54,27 +53,27 @@ class ModelMetrics:
     """Detailed metrics for each model."""
     model_id: str
     slot_name: str
-    
+
     # Circuit breaker state
     circuit_state: str = "closed"  # closed, open, half_open
     failure_count: int = 0
-    last_failure_time: Optional[datetime] = None
-    next_attempt_time: Optional[datetime] = None
-    
+    last_failure_time: datetime | None = None
+    next_attempt_time: datetime | None = None
+
     # Performance metrics
     recent_latencies: deque = field(default_factory=lambda: deque(maxlen=50))
     recent_successes: deque = field(default_factory=lambda: deque(maxlen=100))
     recent_failures: deque = field(default_factory=lambda: deque(maxlen=100))
-    
+
     # Usage tracking
     total_requests: int = 0
     total_errors: int = 0
-    last_used: Optional[datetime] = None
-    
+    last_used: datetime | None = None
+
     # Rate limiting
-    rate_limit_remaining: Optional[int] = None
-    rate_limit_reset: Optional[datetime] = None
-    
+    rate_limit_remaining: int | None = None
+    rate_limit_reset: datetime | None = None
+
     # Scoring factors
     avg_latency_ms: float = 0.0
     success_rate: float = 1.0
@@ -84,43 +83,43 @@ class ModelMetrics:
 
 class CircuitBreaker:
     """Circuit breaker implementation for individual models."""
-    
+
     def __init__(self, config: CircuitBreakerConfig):
         self.config = config
         self.state = "closed"
         self.failure_count = 0
         self.last_failure_time = None
         self.next_attempt_time = None
-    
+
     def can_execute(self) -> bool:
         """Check if the circuit allows execution."""
         now = datetime.utcnow()
-        
+
         if self.state == "closed":
             return True
         elif self.state == "open":
             if self.next_attempt_time and now >= self.next_attempt_time:
                 self.state = "half_open"
-                logger.info(f"Circuit breaker transitioning to half-open")
+                logger.info("Circuit breaker transitioning to half-open")
                 return True
             return False
         elif self.state == "half_open":
             return True
-        
+
         return False
-    
+
     def record_success(self):
         """Record a successful execution."""
         if self.state == "half_open":
             self.state = "closed"
             self.failure_count = 0
             logger.info("Circuit breaker closed after successful execution")
-    
+
     def record_failure(self):
         """Record a failed execution."""
         self.failure_count += 1
         self.last_failure_time = datetime.utcnow()
-        
+
         if self.state == "closed":
             if self.failure_count >= self.config.failure_threshold:
                 self.state = "open"
@@ -138,33 +137,33 @@ class CircuitBreaker:
 
 class ModelManager:
     """Advanced model management with circuit breaker and dynamic scoring."""
-    
+
     def __init__(self):
-        self.circuit_breakers: Dict[str, CircuitBreaker] = {}
-        self.metrics: Dict[str, ModelMetrics] = {}
-        self.request_traces: Dict[str, dict] = {}
-        
+        self.circuit_breakers: dict[str, CircuitBreaker] = {}
+        self.metrics: dict[str, ModelMetrics] = {}
+        self.request_traces: dict[str, dict] = {}
+
         # Initialize circuit breakers and metrics for all models
         self._initialize_models()
-        
+
         # Note: Background tasks will be started when the event loop is running
         self._background_tasks_started = False
-    
+
     def _initialize_models(self):
         """Initialize circuit breakers and metrics for all configured models."""
         cb_config = CircuitBreakerConfig()
-        
+
         for slot in config.MODEL_LIST:
             slot_name = slot["model_name"]
             model_id = slot["litellm_params"]["model"]
-            
+
             self.circuit_breakers[slot_name] = CircuitBreaker(cb_config)
             self.metrics[slot_name] = ModelMetrics(
                 model_id=model_id,
                 slot_name=slot_name,
                 priority_score=self._get_priority_score(slot_name)
             )
-    
+
     def _get_priority_score(self, slot_name: str) -> float:
         """Get priority score based on model position in chain."""
         priority_map = {
@@ -176,65 +175,65 @@ class ModelManager:
             "fallback": 0.5
         }
         return priority_map.get(slot_name, 0.5)
-    
-    def get_available_models(self) -> List[str]:
+
+    def get_available_models(self) -> list[str]:
         """Get list of models that can currently accept requests."""
         available = []
-        
+
         for slot_name, metrics in self.metrics.items():
             cb = self.circuit_breakers[slot_name]
-            
+
             # Check circuit breaker
             if not cb.can_execute():
                 continue
-            
+
             # Check rate limits
             if metrics.rate_limit_remaining == 0:
                 if metrics.rate_limit_reset and datetime.utcnow() < metrics.rate_limit_reset:
                     continue
-            
+
             available.append(slot_name)
-        
+
         return available
-    
-    def get_best_model(self, request_id: str) -> Optional[str]:
+
+    def get_best_model(self, request_id: str) -> str | None:
         """Select the best model based on dynamic scoring."""
         available = self.get_available_models()
-        
+
         if not available:
             logger.warning(f"No models available for request {request_id}")
             return None
-        
+
         # Calculate scores for available models
         scored_models = []
         for slot_name in available:
             score = self._calculate_model_score(slot_name)
             scored_models.append((score, slot_name))
-        
+
         # Sort by score (highest first)
         scored_models.sort(reverse=True)
-        
+
         best_model = scored_models[0][1]
         logger.info(f"Selected model {best_model} with score {scored_models[0][2]:.3f} for request {request_id}")
-        
+
         return best_model
-    
-    def _calculate_model_score(self, slot_name: str) -> Tuple[float, float, float, float]:
+
+    def _calculate_model_score(self, slot_name: str) -> tuple[float, float, float, float]:
         """Calculate comprehensive score for a model."""
         metrics = self.metrics[slot_name]
-        
+
         # Success rate score (0-1)
         success_score = metrics.success_rate
-        
+
         # Latency score (inverse, 0-1)
         latency_score = 1.0 / (1.0 + metrics.avg_latency_ms / 1000.0)
-        
+
         # Load score (based on recent usage)
         load_score = max(0, 1.0 - metrics.load_score)
-        
+
         # Priority score (pre-defined)
         priority_score = metrics.priority_score
-        
+
         # Weighted combination
         total_score = (
             success_score * 0.4 +
@@ -242,9 +241,9 @@ class ModelManager:
             load_score * 0.2 +
             priority_score * 0.1
         )
-        
+
         return total_score, success_score, latency_score, load_score
-    
+
     def start_request(self, slot_name: str, request_id: str) -> dict:
         """Start tracking a request."""
         trace = {
@@ -254,113 +253,112 @@ class ModelManager:
             "start_datetime": datetime.utcnow(),
         }
         self.request_traces[request_id] = trace
-        
+
         metrics = self.metrics[slot_name]
         metrics.total_requests += 1
         metrics.last_used = datetime.utcnow()
-        
+
         logger.info(f"Started request {request_id} on model {slot_name}")
-        
+
         return trace
-    
+
     def record_success(self, slot_name: str, request_id: str, tokens: int = 0):
         """Record a successful request completion."""
         if request_id not in self.request_traces:
             return
-        
+
         trace = self.request_traces[request_id]
         end_time = time.monotonic()
         latency_ms = (end_time - trace["start_time"]) * 1000
-        
+
         # Update circuit breaker
         self.circuit_breakers[slot_name].record_success()
-        
+
         # Update metrics
         metrics = self.metrics[slot_name]
         metrics.recent_successes.append(end_time)
         metrics.recent_latencies.append(latency_ms)
-        
+
         # Update Prometheus metrics
         MODEL_REQUESTS.labels(model=metrics.model_id, status='success').inc()
         MODEL_LATENCY.labels(model=metrics.model_id).observe(latency_ms / 1000.0)
         if tokens > 0:
             TOKEN_USAGE.labels(model=metrics.model_id).inc(tokens)
-        
+
         # Update rolling averages
         self._update_metrics(slot_name)
-        
+
         # Clean up trace
         del self.request_traces[request_id]
-        
+
         logger.info(f"Request {request_id} completed successfully in {latency_ms:.1f}ms")
-    
+
     def record_failure(self, slot_name: str, request_id: str, error: str):
         """Record a failed request."""
         if request_id not in self.request_traces:
             return
-        
-        trace = self.request_traces[request_id]
+
         end_time = time.monotonic()
-        
+
         # Update circuit breaker
         self.circuit_breakers[slot_name].record_failure()
-        
+
         # Update metrics
         metrics = self.metrics[slot_name]
         metrics.total_errors += 1
         metrics.recent_failures.append(end_time)
-        
+
         # Update Prometheus metrics
         MODEL_REQUESTS.labels(model=metrics.model_id, status='error').inc()
-        
+
         # Update rolling averages
         self._update_metrics(slot_name)
-        
+
         # Clean up trace
         del self.request_traces[request_id]
-        
+
         logger.error(f"Request {request_id} failed on model {slot_name}: {error}")
-    
-    def update_rate_limit(self, slot_name: str, remaining: Optional[int], reset: Optional[str]):
+
+    def update_rate_limit(self, slot_name: str, remaining: int | None, reset: str | None):
         """Update rate limit information."""
         metrics = self.metrics[slot_name]
         metrics.rate_limit_remaining = remaining
-        
+
         if reset:
             try:
                 metrics.rate_limit_reset = datetime.fromisoformat(reset.replace('Z', '+00:00'))
-            except:
+            except Exception:
                 pass
-    
+
     def _update_metrics(self, slot_name: str):
         """Update rolling metrics for a model."""
         metrics = self.metrics[slot_name]
-        
+
         # Calculate success rate
         total_recent = len(metrics.recent_successes) + len(metrics.recent_failures)
         if total_recent > 0:
             metrics.success_rate = len(metrics.recent_successes) / total_recent
-        
+
         # Calculate average latency
         if metrics.recent_latencies:
             metrics.avg_latency_ms = sum(metrics.recent_latencies) / len(metrics.recent_latencies)
-        
+
         # Calculate load score (requests per minute)
         now = datetime.utcnow()
         one_minute_ago = now - timedelta(minutes=1)
         recent_requests = sum(
-            1 for success_time in metrics.recent_successes 
+            1 for success_time in metrics.recent_successes
             if success_time >= one_minute_ago.timestamp()
         )
         metrics.load_score = min(1.0, recent_requests / 10.0)  # Normalize to 0-1
-    
+
     def start_background_tasks(self):
         """Start background tasks when event loop is available."""
         if not self._background_tasks_started:
             asyncio.create_task(self._cleanup_old_traces())
             asyncio.create_task(self._update_scores())
             self._background_tasks_started = True
-    
+
     async def _update_scores(self):
         """Background task to update model scores periodically."""
         while True:
@@ -371,7 +369,7 @@ class ModelManager:
             except Exception as e:
                 logger.error(f"Error updating scores: {e}")
                 await asyncio.sleep(60)
-    
+
     async def _cleanup_old_traces(self):
         """Background task to clean up old request traces."""
         while True:
@@ -381,22 +379,22 @@ class ModelManager:
                     req_id for req_id, trace in self.request_traces.items()
                     if now - trace["start_time"] > 300  # 5 minutes
                 ]
-                
+
                 for req_id in expired:
                     del self.request_traces[req_id]
-                
+
                 await asyncio.sleep(60)  # Clean up every minute
             except Exception as e:
                 logger.error(f"Error cleaning up traces: {e}")
                 await asyncio.sleep(60)
-    
-    def get_health_snapshot(self) -> List[dict]:
+
+    def get_health_snapshot(self) -> list[dict]:
         """Get comprehensive health snapshot for all models."""
         snapshot = []
-        
+
         for slot_name, metrics in self.metrics.items():
             cb = self.circuit_breakers[slot_name]
-            
+
             # Determine overall health status
             if cb.state == "open":
                 status = "failed"
@@ -406,7 +404,7 @@ class ModelManager:
                 status = "degraded"
             else:
                 status = "available"
-            
+
             snapshot.append({
                 "id": slot_name,
                 "model_id": metrics.model_id,
@@ -423,7 +421,7 @@ class ModelManager:
                 "rate_limit_reset": metrics.rate_limit_reset.isoformat() if metrics.rate_limit_reset else None,
                 "score": self._calculate_model_score(slot_name)[0],
             })
-        
+
         return snapshot
 
 

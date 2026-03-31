@@ -16,21 +16,39 @@ GET  /api/export/{session_id}   → download session as Markdown
 POST /api/cache/clear           → wipe the semantic cache
 """
 
-import json
 import asyncio
+import json
 import logging
-import uuid
 import logging.handlers
+import os
+import secrets
+import time
+import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
-from fastapi.responses import StreamingResponse, FileResponse, Response
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+import psutil
 from dotenv import load_dotenv
-from datetime import datetime
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
+from pydantic import BaseModel
+
+import cache
+import compiler
+import config
+import enhanced_agent_runner
+import memory
+import model_manager
+import router as ai_router
 
 load_dotenv()
 
@@ -39,7 +57,7 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 class JSONFormatter(logging.Formatter):
     """Custom JSON formatter with request ID tracking."""
-    
+
     def format(self, record):
         log_entry = {
             "timestamp": datetime.utcnow().isoformat(),
@@ -50,15 +68,15 @@ class JSONFormatter(logging.Formatter):
             "function": record.funcName,
             "line": record.lineno,
         }
-        
+
         # Add request ID if available
         if hasattr(record, 'request_id'):
             log_entry['request_id'] = record.request_id
-        
+
         # Add exception info if present
         if record.exc_info:
             log_entry['exception'] = self.formatException(record.exc_info)
-        
+
         return json.dumps(log_entry)
 
 def setup_logging():
@@ -68,25 +86,25 @@ def setup_logging():
     console_formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    
+
     # Create handlers
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(console_formatter)
-    
+
     # File handler with rotation (10MB max, keep 5 files)
     file_handler = logging.handlers.RotatingFileHandler(
-        'quotadrift.log', 
+        'quotadrift.log',
         maxBytes=10*1024*1024,  # 10MB
         backupCount=5
     )
     file_handler.setFormatter(json_formatter)
-    
+
     # Configure root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
-    
+
     return root_logger
 
 # Setup logging
@@ -104,6 +122,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Define STATIC_DIR
+STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ---------------------------------------------------------------------------
@@ -113,20 +133,20 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 async def request_id_middleware(request: Request, call_next):
     """Add unique request ID to all requests for tracing."""
     request_id = str(uuid.uuid4())[:8]
-    
+
     # Add request ID to request state
     request.state.request_id = request_id
-    
+
     # Add to logger context
     old_factory = logging.getLogRecordFactory()
-    
+
     def record_factory(*args, **kwargs):
         record = old_factory(*args, **kwargs)
         record.request_id = request_id
         return record
-    
+
     logging.setLogRecordFactory(record_factory)
-    
+
     try:
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
@@ -134,35 +154,24 @@ async def request_id_middleware(request: Request, call_next):
     finally:
         logging.setLogRecordFactory(old_factory)
 
-# ---------------------------------------------------------------------------
-# Imports
-# ---------------------------------------------------------------------------
-import memory
-import router as ai_router
-import compiler
-import config
-import cache
-import model_manager
-import enhanced_agent_runner
 
 @app.on_event("startup")
 async def startup():
     memory.init_db()
     model_manager.model_manager.start_background_tasks()
-    
+
     # Verify provider configuration
     await verify_providers()
-    
+
     # Start system metrics task
     asyncio.create_task(system_metrics_task())
-    
+
     logger.info("QuotaDrift startup complete - all systems ready")
 
 async def verify_providers():
     """Verify that all configured providers have valid API keys."""
-    import os
     logger.info("Verifying provider configuration...")
-    
+
     required_env_vars = {
         'GROQ_API_KEY': 'Groq',
         'GITHUB_TOKEN': 'GitHub Models',
@@ -173,32 +182,31 @@ async def verify_providers():
         'CLOUDFLARE_ACCOUNT_ID': 'Cloudflare Workers AI',
         'OPENROUTER_API_KEY': 'OpenRouter'
     }
-    
+
     missing_vars = []
     for env_var, provider in required_env_vars.items():
         if not os.getenv(env_var):
             missing_vars.append(f"{provider} ({env_var})")
-    
+
     if missing_vars:
         logger.warning(f"Missing API keys for: {', '.join(missing_vars)}")
         logger.warning("These providers will be skipped during failover.")
     else:
         logger.info("✅ All provider API keys configured")
-    
+
     # Test basic connectivity for each provider
     await test_provider_connectivity()
 
 async def test_provider_connectivity():
     """Test basic connectivity for each provider."""
-    import os
-    
+
     # Only test if we have at least one provider key
     if not os.getenv('GROQ_API_KEY'):
         logger.warning("Skipping connectivity tests - no primary provider key found")
         return
-    
+
     test_providers = []
-    
+
     if os.getenv('GROQ_API_KEY'):
         test_providers.append('Groq')
     if os.getenv('MISTRAL_API_KEY'):
@@ -211,9 +219,9 @@ async def test_provider_connectivity():
         test_providers.append('Cloudflare Workers AI')
     if os.getenv('OPENROUTER_API_KEY'):
         test_providers.append('OpenRouter')
-    
+
     logger.info(f"Testing connectivity for: {', '.join(test_providers)}")
-    
+
     # Note: We don't actually test connectivity here to avoid using tokens on startup
     # But we log which providers are configured for testing
     logger.info("Provider configuration verified - ready for failover testing")
@@ -224,9 +232,9 @@ async def test_provider_connectivity():
 # ---------------------------------------------------------------------------
 class RunCodeRequest(BaseModel):
     code: str
-    language: Optional[str] = None
-    filename: Optional[str] = None
-    timeout: Optional[int] = 10
+    language: str | None = None
+    filename: str | None = None
+    timeout: int | None = 10
 
 @app.post("/api/run-code")
 async def run_code(request: RunCodeRequest):
@@ -238,7 +246,7 @@ async def run_code(request: RunCodeRequest):
             language=request.language,
             filename=request.filename
         )
-        
+
         return {
             "success": result.error is None,
             "stdout": result.stdout,
@@ -248,7 +256,7 @@ async def run_code(request: RunCodeRequest):
             "language": result.language,
             "error": result.error
         }
-        
+
     except Exception as e:
         return {
             "success": False,
@@ -265,11 +273,11 @@ async def get_supported_languages():
     """Get list of supported programming languages."""
     runner = enhanced_agent_runner.get_runner()
     languages = runner.get_supported_languages()
-    
+
     return {
         "languages": languages,
         "details": {
-            lang: runner.get_language_info(lang) 
+            lang: runner.get_language_info(lang)
             for lang in languages
         }
     }
@@ -279,22 +287,22 @@ class EditMessageRequest(BaseModel):
     session_id: int
     message_index: int
     new_content: str
-    system: Optional[str] = None
+    system: str | None = None
 
 class ShareRequest(BaseModel):
     session_id: int
-    expires_hours: Optional[int] = 24
+    expires_hours: int | None = 24
 
 class NewSessionRequest(BaseModel):
     project_name:        str
-    project_description: Optional[str] = ""
-    session_title:       Optional[str] = "New session"
+    project_description: str = ""
+    session_title:       str = "New session"
 
 class ChatRequest(BaseModel):
     session_id:       int
     message:          str
-    project_context:  Optional[str] = None   # extra system context from the user
-    prune_n:          Optional[int] = 0      # for editing/regenerating messages
+    project_context:  str | None = None   # extra system context from the user
+    prune_n:          int | None = 0      # for editing/regenerating messages
 
 class SwitchContextRequest(BaseModel):
     session_id: int
@@ -302,13 +310,13 @@ class SwitchContextRequest(BaseModel):
 class AgentRunRequest(BaseModel):
     code:      str
     language:  str
-    session_id: Optional[int] = None
+    session_id: int | None = None
 
 class AgentHealRequest(BaseModel):
     code:        str
     language:    str
     session_id:  int
-    max_retries: Optional[int] = 3
+    max_retries: int | None = 3
 
 class AgentPlanRequest(BaseModel):
     session_id: int
@@ -338,7 +346,7 @@ async def new_session(body: NewSessionRequest):
 
 
 @app.get("/api/sessions")
-async def get_sessions(project_id: Optional[int] = None):
+async def get_sessions(project_id: int | None = None):
     return {"sessions": memory.list_sessions(project_id)}
 
 
@@ -408,7 +416,7 @@ async def chat_stream(body: ChatRequest):
         ]
         if body.project_context:
             system_parts.append(f"\nProject context:\n{body.project_context}")
-        
+
         if relevant_session or relevant_files:
             sources_event = {
                 "type": "sources",
@@ -422,7 +430,7 @@ async def chat_stream(body: ChatRequest):
             system_parts.append("\nRelevant session context:\n" + "\n---\n".join(relevant_session))
         if relevant_files:
             system_parts.append("\nRelevant project code:\n" + "\n---\n".join(relevant_files))
-            
+
         system = "\n".join(system_parts)
 
         # 4. Append the new user message to history for the LLM call
@@ -502,36 +510,36 @@ async def edit_message(request: EditMessageRequest):
     try:
         # Get session messages
         messages = memory.get_messages_for_llm(request.session_id)
-        
+
         if request.message_index >= len(messages):
             raise HTTPException(status_code=404, detail="Message index out of range")
-        
+
         # Edit the message
         messages[request.message_index]['content'] = request.new_content
-        
+
         # Remove all messages after the edited one
         messages_to_keep = messages[:request.message_index + 1]
-        
+
         # Update session with truncated messages
         memory.update_session_messages(request.session_id, messages_to_keep)
-        
+
         # If there's a system prompt, update it
         if request.system and request.message_index == 0:
             memory.update_session_system(request.session_id, request.system)
-        
+
         logger.info(f"Edited message {request.message_index} in session {request.session_id}")
         MESSAGES_PROCESSED.inc()
-        
+
         return {
             "success": True,
             "message": f"Message {request.message_index} edited successfully",
             "session_id": request.session_id,
             "message_index": request.message_index
         }
-        
+
     except Exception as e:
         logger.error(f"Error editing message: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 @app.post("/api/chat/regenerate")
 async def regenerate_message(request: EditMessageRequest):
@@ -539,37 +547,37 @@ async def regenerate_message(request: EditMessageRequest):
     try:
         # Get session messages up to the target
         all_messages = memory.get_messages_for_llm(request.session_id)
-        
+
         if request.message_index >= len(all_messages):
             raise HTTPException(status_code=404, detail="Message index out of range")
-        
+
         # Keep messages before the target
         messages_to_regenerate = all_messages[:request.message_index]
-        
+
         # Get the message to regenerate (for context)
         target_message = all_messages[request.message_index]
-        
+
         # Generate new response
         response = await ai_router.chat(
             messages=messages_to_regenerate,
             system=request.system
         )
-        
+
         # Update the message
         target_message['content'] = response['content']
         target_message['model_used'] = response['model_used']
-        
+
         # Update session
         updated_messages = messages_to_regenerate + [target_message]
         memory.update_session_messages(request.session_id, updated_messages)
-        
+
         logger.info(f"Regenerated message {request.message_index} in session {request.session_id}")
         MESSAGES_PROCESSED.inc()
         PROVIDER_REQUESTS.labels(
-            provider=response['model_used'], 
+            provider=response['model_used'],
             status='success'
         ).inc()
-        
+
         return {
             "success": True,
             "content": response['content'],
@@ -578,21 +586,19 @@ async def regenerate_message(request: EditMessageRequest):
             "session_id": request.session_id,
             "message_index": request.message_index
         }
-        
+
     except Exception as e:
         logger.error(f"Error regenerating message: {e}")
         PROVIDER_ERRORS.labels(
             provider='unknown',
             error_type='regeneration_failed'
         ).inc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # ---------------------------------------------------------------------------
 # Session sharing
 # ---------------------------------------------------------------------------
-import secrets
-from datetime import datetime, timedelta
 
 # Store for share tokens (in production, use a database)
 share_tokens: dict[str, dict] = {}
@@ -602,14 +608,14 @@ async def create_share_link(request: ShareRequest):
     """Create a shareable link for a session."""
     token = secrets.token_urlsafe(16)
     expires_at = datetime.utcnow() + timedelta(hours=request.expires_hours)
-    
+
     share_tokens[token] = {
         "session_id": request.session_id,
         "expires_at": expires_at.isoformat(),
         "created_at": datetime.utcnow().isoformat(),
         "access_count": 0
     }
-    
+
     return {
         "share_url": f"/shared/{token}",
         "token": token,
@@ -621,25 +627,25 @@ async def get_shared_session(token: str):
     """Get a shared session by token."""
     if token not in share_tokens:
         raise HTTPException(status_code=404, detail="Share link not found or expired")
-    
+
     share_data = share_tokens[token]
     expires_at = datetime.fromisoformat(share_data["expires_at"])
-    
+
     if datetime.utcnow() > expires_at:
         del share_tokens[token]
         raise HTTPException(status_code=410, detail="Share link expired")
-    
+
     # Increment access count
     share_data["access_count"] += 1
-    
+
     # Get session data
     session_id = share_data["session_id"]
-    
+
     try:
         session = memory.get_session(session_id)
         messages = memory.get_messages(session_id)
         project = memory.get_project(session["project_id"]) if session else None
-        
+
         return {
             "session": {
                 "id": session_id,
@@ -658,14 +664,14 @@ async def get_shared_session(token: str):
                 "access_count": share_data["access_count"]
             }
         }
-    except Exception as e:
-        raise HTTPException(status_code=404, detail="Session not found")
+    except Exception:
+        raise HTTPException(status_code=404, detail="Session not found") from None
 
 @app.get("/shared/{token}")
 async def serve_shared_page(token: str):
     """Serve a read-only page for shared sessions."""
     try:
-        session_data = await get_shared_session(token)
+        await get_shared_session(token)
         return FileResponse("static/shared.html", media_type="text/html")
     except HTTPException:
         return Response("<h1>Share link not found or expired</h1>", status_code=404)
@@ -673,10 +679,9 @@ async def serve_shared_page(token: str):
 @app.get("/api/provider-test")
 async def test_providers():
     """Test connectivity for all configured providers."""
-    import os
-    
+
     results = {}
-    
+
     # Test Groq
     if os.getenv('GROQ_API_KEY'):
         try:
@@ -694,7 +699,7 @@ async def test_providers():
             results['groq'] = {'status': 'error', 'error': str(e)}
     else:
         results['groq'] = {'status': 'no_key'}
-    
+
     # Test Mistral
     if os.getenv('MISTRAL_API_KEY'):
         try:
@@ -707,7 +712,7 @@ async def test_providers():
                     "api_key": "os.environ/MISTRAL_API_KEY"
                 }
             }
-            
+
             response = await ai_router.chat(
                 messages=[{"role": "user", "content": "Say 'test'"}],
                 system="You are a test assistant. Respond with only the word 'test'."
@@ -717,7 +722,7 @@ async def test_providers():
                 'model_used': response.get('model_used', 'unknown'),
                 'response': response.get('content', 'no content')[:50]
             }
-            
+
             # Restore original config
             config.MODEL_LIST[0] = original_primary
         except Exception as e:
@@ -726,7 +731,7 @@ async def test_providers():
             config.MODEL_LIST[0] = original_primary
     else:
         results['mistral'] = {'status': 'no_key'}
-    
+
     # Test other providers (basic key check only to avoid consuming tokens)
     for provider, env_key, display_name in [
         ('siliconflow', 'SILICONFLOW_API_KEY', 'Silicon Flow'),
@@ -741,7 +746,7 @@ async def test_providers():
                 results[provider]['message'] = f'{display_name} API key present but missing ACCOUNT_ID'
         else:
             results[provider] = {'status': 'no_key', 'message': f'{display_name} API key not configured'}
-    
+
     return {
         'timestamp': datetime.utcnow().isoformat(),
         'results': results,
@@ -755,10 +760,6 @@ async def test_providers():
 # ---------------------------------------------------------------------------
 # Enhanced Metrics and Observability
 # ---------------------------------------------------------------------------
-from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
-import psutil
-import time
-import os
 
 # Request metrics
 REQUEST_COUNT = Counter('quotadrift_requests_total', 'Total requests', ['method', 'endpoint', 'status'])
@@ -787,22 +788,22 @@ async def metrics_middleware(request: Request, call_next):
     """Collect metrics for all requests."""
     start_time = time.time()
     ACTIVE_REQUESTS.inc()
-    
+
     try:
         response = await call_next(request)
         duration = time.time() - start_time
-        
+
         REQUEST_COUNT.labels(
             method=request.method,
             endpoint=request.url.path,
             status=response.status_code
         ).inc()
-        
+
         REQUEST_DURATION.labels(
             method=request.method,
             endpoint=request.url.path
         ).observe(duration)
-        
+
         return response
     finally:
         ACTIVE_REQUESTS.dec()
@@ -824,10 +825,6 @@ async def system_metrics_task():
 @app.get("/metrics")
 async def prometheus_metrics():
     """Prometheus metrics endpoint."""
-    # Update system metrics
-    memory_percent = psutil.virtual_memory().percent
-    cpu_percent = psutil.cpu_percent()
-    
     # Add system metrics (you could register these as Gauges)
     return Response(
         generate_latest(),
@@ -845,10 +842,10 @@ async def readiness_check():
     try:
         # Check database
         memory.get_projects()
-        
+
         # Check models
         available = model_manager.model_manager.get_available_models()
-        
+
         return {
             "status": "ready",
             "timestamp": datetime.utcnow().isoformat(),
@@ -867,11 +864,11 @@ async def readiness_check():
 async def model_status():
     """Enhanced model status with circuit breaker, scoring, and quota forecasting."""
     models = model_manager.model_manager.get_health_snapshot()
-    
+
     # Add quota forecasting
     for model in models:
         model['quota_forecast'] = calculate_quota_forecast(model)
-    
+
     return {
         "models": models,
         "timestamp": datetime.utcnow().isoformat(),
@@ -884,25 +881,25 @@ def calculate_quota_forecast(model: dict) -> dict:
     """Calculate quota forecast based on usage and known limits."""
     slot_name = model['slot']
     model_id = model['model_id']
-    
+
     # Get provider-specific limits
     limits = get_quota_limits()
     provider = get_provider_from_model(model_id)
     limit_info = limits.get(provider, {"daily": 14400, "period": "day"})  # Default to Groq
-    
+
     # Get current usage from model manager
     metrics = model_manager.model_manager.metrics.get(slot_name)
     if not metrics:
         return {"remaining": limit_info["daily"], "usage_percent": 0, "forecast": "Available"}
-    
+
     # Calculate usage rate (requests per hour)
     now = datetime.utcnow()
     one_hour_ago = now - timedelta(hours=1)
     recent_requests = sum(
-        1 for success_time in metrics.recent_successes 
+        1 for success_time in metrics.recent_successes
         if success_time >= one_hour_ago.timestamp()
     )
-    
+
     # Project usage for the period
     if limit_info["period"] == "day":
         hours_in_day = 24
@@ -911,7 +908,6 @@ def calculate_quota_forecast(model: dict) -> dict:
         usage_percent = min(100, (projected_daily / limit_info["daily"]) * 100)
     elif limit_info["period"] == "month":
         # For monthly limits, project based on current day of month
-        day_of_month = now.day
         days_in_month = 30  # Approximation
         projected_monthly = recent_requests * days_in_month
         remaining = max(0, limit_info["daily"] - projected_monthly)  # daily contains monthly limit
@@ -919,7 +915,7 @@ def calculate_quota_forecast(model: dict) -> dict:
     else:
         remaining = limit_info["daily"]
         usage_percent = 0
-    
+
     # Determine forecast status
     if usage_percent < 50:
         forecast = "Healthy"
@@ -929,7 +925,7 @@ def calculate_quota_forecast(model: dict) -> dict:
         forecast = "Low"
     else:
         forecast = "Critical"
-    
+
     return {
         "remaining": remaining,
         "usage_percent": round(usage_percent, 1),
@@ -982,40 +978,42 @@ async def clear_cache():
 @app.post("/api/agent/run")
 async def agent_run(body: AgentRunRequest):
     """Execute a snippet of code locally and return the result."""
-    result = agent_runner.run_code(body.code, body.language)
+    runner = enhanced_agent_runner.get_runner()
+    result = runner.run_code(body.code, body.language)
     return result
 
 
 @app.post("/api/agent/heal")
 async def agent_heal(body: AgentHealRequest):
     """
-    Run-Fix-Repeat loop. 
+    Run-Fix-Repeat loop.
     Streams status updates and final result.
     """
     async def _heal_gen():
         current_code = body.code
         attempts = 0
-        
+
         while attempts < body.max_retries:
             attempts += 1
             yield f"data: {json.dumps({'type': 'status', 'content': f'Attempt {attempts}: Running code...'})}\n\n"
-            
-            result = agent_runner.run_code(current_code, body.language)
-            
+
+            runner = enhanced_agent_runner.get_runner()
+            result = runner.run_code(current_code, body.language)
+
             if "error" in result:
                 yield f"data: {json.dumps({'type': 'error', 'content': result['error']})}\n\n"
                 break
-                
+
             if result.get("exit_code") == 0:
                 yield f"data: {json.dumps({'type': 'done', 'content': result['stdout'], 'code': current_code})}\n\n"
                 return
-            
+
             # It failed! Ask AI for a fix.
             error_msg = result.get("stderr") or "Unknown error"
-            yield f"data: {json.dumps({'type': 'status', 'content': f'Execution failed. Asking AI for a fix...'})}\n\n"
-            
-            prompt = f"""The following {body.language} code failed with an error. 
-Please provide the CORRECTED code block. 
+            yield f"data: {json.dumps({'type': 'status', 'content': 'Execution failed. Asking AI for a fix...'})}\n\n"
+
+            prompt = f"""The following {body.language} code failed with an error.
+Please provide the CORRECTED code block.
 Return ONLY the code, no explanation, no markdown backticks if possible (or just the code inside them).
 
 CODE:
@@ -1030,59 +1028,30 @@ ERROR:
                     messages=[{"role": "user", "content": prompt}],
                     system="You are a senior debugger. Output only the fixed code."
                 )
-                
+
                 # Extract code from response (handle markdown backticks)
                 new_code = ai_fix["content"].strip()
                 if "```" in new_code:
                     lines = new_code.splitlines()
-                    if lines[0].startswith("```"): lines = lines[1:]
-                    if lines[-1].startswith("```"): lines = lines[:-1]
+                    if lines[0].startswith("```"):
+                        lines = lines[1:]
+                    if lines[-1].startswith("```"):
+                        lines = lines[:-1]
                     new_code = "\n".join(lines).strip()
-                
+
                 current_code = new_code
                 yield f"data: {json.dumps({'type': 'fix', 'content': 'AI suggested a fix. Retrying...'})}\n\n"
             except Exception as e:
                 yield f"data: {json.dumps({'type': 'error', 'content': f'AI fix failed: {str(e)}'})}\n\n"
                 break
-        
+
         yield f"data: {json.dumps({'type': 'error', 'content': f'Failed to heal after {body.max_retries} attempts.'})}\n\n"
 
     return StreamingResponse(_heal_gen(), media_type="text/event-stream")
 
 
 # ---------------------------------------------------------------------------
-# MCP Server (Model Context Protocol) 
-# ---------------------------------------------------------------------------
-@app.get("/mcp/sse")
-async def mcp_sse(request: Request):
-    return await mcp.sse_handler(request)
-
-@app.post("/mcp/messages")
-async def mcp_messages(request: Request, client_id: str):
-    # 1. Tools registry for MCP tools
-    def _mcp_search(query: str, project_id: int = 1):
-        # Hardcoded project_id to 1 if not provided
-        results = memory.hybrid_search_rrf(query, project_id, session_id=0, n=5)
-        return "\n\n---\n\n".join(results)
-
-    def _mcp_read(filename: str, project_id: int = 1):
-        with memory.sqlite3.connect(memory.DB_PATH) as conn:
-            row = conn.execute("SELECT content FROM project_files WHERE filename=? AND project_id=?", (filename, project_id)).fetchone()
-            return row[0] if row else f"File {filename} not found."
-
-    registry = {
-        "search_codebase": _mcp_search,
-        "read_file": _mcp_read,
-    }
-
-    # 2. Process message
-    message = await request.json()
-    response = await mcp.handle_message(client_id, message, registry)
-    return response
-
-
-# ---------------------------------------------------------------------------
-# Architect-Editor Flow
+# Agent Planning
 # ---------------------------------------------------------------------------
 PLAN_SYSTEM = """You are a software architect.
 Break down the user's task into a technical plan.
@@ -1094,22 +1063,22 @@ Keep it under 20 lines."""
 async def agent_plan(body: AgentPlanRequest):
     """Use a frontier model to write a technical plan.md."""
     history = memory.get_messages_for_llm(body.session_id)
-    
+
     # Use priority_b or a 'frontier' model (defaulting to router's logic)
     result = await ai_router.chat(
         messages=history + [{"role": "user", "content": f"TASK: {body.task}\n\nWrite a technical plan for this."}],
         system=PLAN_SYSTEM,
     )
-    
+
     # Save plan as a system message in background
     memory.save_message(body.session_id, "system", f"PLAN:\n{result['content']}", model="architect")
-    
+
     return {"plan": result["content"]}
 
 # Health & Forecasting
 # ---------------------------------------------------------------------------
 @app.get("/api/health")
-async def health_check():
+async def api_health_check():
     """Health check that returns 200 even if some providers are down."""
     health_status = {
         "status": "healthy",
@@ -1120,37 +1089,37 @@ async def health_check():
         "database": "connected",
         "cache": "connected"
     }
-    
+
     # Check provider health
     try:
         models = model_manager.model_manager.get_health_snapshot()
         failing_providers = []
-        
+
         for model in models:
             provider_name = model.get('display', model.get('slot', 'unknown'))
             circuit_state = model.get('circuit_state', 'unknown')
             success_rate = model.get('success_rate', 0)
-            
+
             health_status["providers"][provider_name] = {
                 "status": "healthy" if circuit_state == "closed" and success_rate > 0.5 else "degraded",
                 "circuit_state": circuit_state,
                 "success_rate": success_rate
             }
-            
+
             if circuit_state == "open" or success_rate < 0.5:
                 failing_providers.append(provider_name)
-        
+
         # Overall status based on provider health
         if len(failing_providers) > 0 and len(failing_providers) >= len(models) * 0.5:
             health_status["status"] = "degraded"
             health_status["message"] = f"Multiple providers failing: {', '.join(failing_providers)}"
         elif failing_providers:
             health_status["message"] = f"Some providers failing: {', '.join(failing_providers)}"
-            
+
     except Exception as e:
         health_status["status"] = "unhealthy"
         health_status["message"] = f"Provider health check failed: {str(e)}"
-    
+
     # Check database connectivity
     try:
         memory.list_sessions()
@@ -1159,7 +1128,7 @@ async def health_check():
         health_status["database"] = "disconnected"
         health_status["status"] = "unhealthy"
         health_status["message"] = f"Database connection failed: {str(e)}"
-    
+
     return health_status
 
 @app.get("/api/quota-forecast")
@@ -1174,7 +1143,7 @@ async def quota_forecast():
         "cloudflare": 10000,      # 10k requests/day
         "openrouter": 200,       # common free tier
     }
-    
+
     stats = {}
     for slot, h in config.health.items():
         provider = slot.split("_")[0]

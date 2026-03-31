@@ -1,6 +1,7 @@
+import asyncio
 import json
 import uuid
-import asyncio
+
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 
@@ -21,7 +22,7 @@ class MCPServer:
             # In a real setup, this would be the absolute URL to /mcp/messages
             # For QuotaDrift, we'll assume relative or handle it in main.py
             yield f"event: endpoint\ndata: /mcp/messages?client_id={client_id}\n\n"
-            
+
             try:
                 while True:
                     msg = await queue.get()
@@ -93,7 +94,7 @@ class MCPServer:
         if method == "tools/call":
             tool_name = params.get("name")
             tool_args = params.get("arguments", {})
-            
+
             if tool_name in tools_registry:
                 try:
                     result = await tools_registry[tool_name](**tool_args)

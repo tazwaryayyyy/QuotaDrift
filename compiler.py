@@ -11,7 +11,6 @@ without the user needing to re-explain anything.
 import json
 import re
 
-
 COMPILE_SYSTEM = """You are a session state compiler. Your only job is to output a compact JSON object that captures the complete state of the coding session so a different AI model can continue it instantly.
 
 Output ONLY valid JSON. No markdown, no explanation, no code fences.

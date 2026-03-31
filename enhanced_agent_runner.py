@@ -10,16 +10,14 @@ Features:
 - Output capture and error handling
 """
 
+import json
+import logging
+import os
+import pathlib
 import subprocess
 import tempfile
-import pathlib
-import os
-import json
 import uuid
-import asyncio
-from typing import Dict, Optional, List
 from dataclasses import dataclass
-import logging
 
 logger = logging.getLogger("agent_runner")
 
@@ -40,11 +38,11 @@ class ExecutionResult:
     exit_code: int
     execution_time: float
     language: str
-    error: Optional[str] = None
+    error: str | None = None
 
 class LanguageConfig:
     """Configuration for supported programming languages."""
-    
+
     LANGUAGES = {
         "python": {
             "extensions": [".py"],
@@ -132,22 +130,22 @@ CMD ["./main"]
 
 class EnhancedAgentRunner:
     """Enhanced agent runner with Docker sandboxing."""
-    
-    def __init__(self, config: Optional[SandboxConfig] = None):
+
+    def __init__(self, config: SandboxConfig | None = None):
         self.config = config or SandboxConfig()
         self.temp_dir = tempfile.mkdtemp(prefix="quotadrift_sandbox_")
-        
-    def detect_language(self, code: str, filename: Optional[str] = None) -> str:
+
+    def detect_language(self, code: str, filename: str | None = None) -> str:
         """Detect programming language from code or filename."""
         if filename:
             ext = pathlib.Path(filename).suffix.lower()
             for lang, config in LanguageConfig.LANGUAGES.items():
                 if ext in config["extensions"]:
                     return lang
-        
+
         # Simple heuristics for language detection
         code_lower = code.lower().strip()
-        
+
         if code_lower.startswith("def ") or "import " in code_lower:
             return "python"
         elif "function " in code_lower or "const " in code_lower or "let " in code_lower:
@@ -160,35 +158,35 @@ class EnhancedAgentRunner:
             return "java"
         elif "#include" in code_lower and "int main" in code_lower:
             return "cpp"
-        
+
         return "python"  # Default fallback
-    
-    async def run_code(self, code: str, language: Optional[str] = None, 
-                    filename: Optional[str] = None) -> ExecutionResult:
+
+    async def run_code(self, code: str, language: str | None,
+                    filename: str | None = None) -> ExecutionResult:
         """Execute code in a Docker sandbox."""
         if not language:
             language = self.detect_language(code, filename)
-        
+
         if language not in LanguageConfig.LANGUAGES:
             return ExecutionResult(
                 stdout="", stderr="", exit_code=1, execution_time=0,
                 language=language, error=f"Language '{language}' not supported"
             )
-        
+
         try:
             # Create sandbox environment
             sandbox_id = str(uuid.uuid4())[:8]
             work_dir = os.path.join(self.temp_dir, sandbox_id)
             os.makedirs(work_dir, exist_ok=True)
-            
+
             # Prepare files
             await self._prepare_files(work_dir, code, language, filename)
-            
+
             # Build and run in Docker
             result = await self._run_in_docker(work_dir, language)
-            
+
             return result
-            
+
         except Exception as e:
             logger.error(f"Error executing {language} code: {e}")
             return ExecutionResult(
@@ -200,19 +198,19 @@ class EnhancedAgentRunner:
             try:
                 import shutil
                 shutil.rmtree(work_dir, ignore_errors=True)
-            except:
+            except Exception:
                 pass
-    
-    async def _prepare_files(self, work_dir: str, code: str, language: str, 
-                           filename: Optional[str] = None):
+
+    async def _prepare_files(self, work_dir: str, code: str, language: str,
+                           filename: str | None = None):
         """Prepare source files for execution."""
         lang_config = LanguageConfig.LANGUAGES[language]
-        
+
         # Write main source file
         main_file = os.path.join(work_dir, "main" + lang_config["extensions"][0])
         with open(main_file, 'w', encoding='utf-8') as f:
             f.write(code)
-        
+
         # Create additional files if needed
         for file_template in lang_config["files"]:
             if file_template == "main.py" and language == "python":
@@ -243,26 +241,26 @@ edition = "2021"
                 """.strip()
                 with open(cargo_file, 'w') as f:
                     f.write(cargo_toml)
-    
+
     async def _run_in_docker(self, work_dir: str, language: str) -> ExecutionResult:
         """Run code in Docker container with resource limits."""
         import time
-        
+
         lang_config = LanguageConfig.LANGUAGES[language]
         container_name = f"quotadrift_{language}_{os.path.basename(work_dir)}"
-        
+
         # Create Dockerfile
         dockerfile_path = os.path.join(work_dir, "Dockerfile")
         with open(dockerfile_path, 'w') as f:
             f.write(lang_config["dockerfile"])
-        
+
         # Build Docker image
         build_cmd = [
             "docker", "build",
             "-t", container_name,
             work_dir
         ]
-        
+
         try:
             build_result = subprocess.run(
                 build_cmd, capture_output=True, text=True, timeout=30
@@ -278,7 +276,7 @@ edition = "2021"
                 stdout="", stderr="", exit_code=1, execution_time=0,
                 language=language, error="Docker build timed out"
             )
-        
+
         # Run container with resource limits
         run_cmd = [
             "docker", "run", "--rm",
@@ -290,16 +288,16 @@ edition = "2021"
             container_name,
             lang_config["entrypoint"]
         ]
-        
+
         start_time = time.time()
-        
+
         try:
             result = subprocess.run(
-                run_cmd, capture_output=True, text=True, 
+                run_cmd, capture_output=True, text=True,
                 timeout=self.config.timeout
             )
             execution_time = time.time() - start_time
-            
+
             return ExecutionResult(
                 stdout=result.stdout,
                 stderr=result.stderr,
@@ -307,7 +305,7 @@ edition = "2021"
                 execution_time=execution_time,
                 language=language
             )
-            
+
         except subprocess.TimeoutExpired:
             # Kill the container
             subprocess.run(["docker", "kill", container_name], capture_output=True)
@@ -315,21 +313,21 @@ edition = "2021"
                 stdout="", stderr="", exit_code=124, execution_time=self.config.timeout,
                 language=language, error=f"Execution timed out after {self.config.timeout} seconds"
             )
-        
+
         finally:
             # Clean up Docker image
-            subprocess.run(["docker", "rmi", container_name], 
+            subprocess.run(["docker", "rmi", container_name],
                         capture_output=True, ignore_errors=True)
-    
-    def get_supported_languages(self) -> List[str]:
+
+    def get_supported_languages(self) -> list[str]:
         """Get list of supported programming languages."""
         return list(LanguageConfig.LANGUAGES.keys())
-    
-    def get_language_info(self, language: str) -> Dict:
+
+    def get_language_info(self, language: str) -> dict:
         """Get information about a supported language."""
         if language not in LanguageConfig.LANGUAGES:
             return {"error": f"Language '{language}' not supported"}
-        
+
         config = LanguageConfig.LANGUAGES[language]
         return {
             "language": language,
@@ -337,38 +335,38 @@ edition = "2021"
             "supported": True,
             "has_package_manager": language in ["python", "javascript", "rust", "go"]
         }
-    
+
     def cleanup(self):
         """Clean up temporary directories."""
         try:
             import shutil
             shutil.rmtree(self.temp_dir, ignore_errors=True)
-        except:
+        except Exception:
             pass
 
 # Fallback for systems without Docker
 class SimpleAgentRunner:
     """Simple fallback runner for systems without Docker."""
-    
+
     def __init__(self):
         import agent_runner  # Import original runner
         self.fallback_runner = agent_runner
-    
-    async def run_code(self, code: str, language: Optional[str] = None,
-                    filename: Optional[str] = None) -> ExecutionResult:
+
+    async def run_code(self, code: str, language: str | None,
+                    filename: str | None = None) -> ExecutionResult:
         """Fallback to simple subprocess execution."""
         if not language:
             language = self.detect_language(code, filename)
-        
+
         if language not in ["python", "javascript"]:
             return ExecutionResult(
                 stdout="", stderr="", exit_code=1, execution_time=0,
                 language=language, error=f"Language '{language}' not supported without Docker"
             )
-        
+
         # Use original runner for Python and JavaScript
         result = self.fallback_runner.run_code(code, language, timeout=10)
-        
+
         return ExecutionResult(
             stdout=result.get("stdout", ""),
             stderr=result.get("stderr", ""),
@@ -377,14 +375,16 @@ class SimpleAgentRunner:
             language=language,
             error=result.get("error")
         )
-    
-    def detect_language(self, code: str, filename: Optional[str] = None) -> str:
+
+    def detect_language(self, code: str, filename: str | None = None) -> str:
         """Simple language detection."""
         if filename:
             ext = pathlib.Path(filename).suffix.lower()
-            if ext == ".py": return "python"
-            elif ext in [".js", ".mjs"]: return "javascript"
-        
+            if ext == ".py":
+                return "python"
+            elif ext in [".js", ".mjs"]:
+                return "javascript"
+
         code_lower = code.lower()
         if "def " in code_lower or "import " in code_lower:
             return "python"
@@ -407,5 +407,5 @@ def get_runner() -> EnhancedAgentRunner:
         except (subprocess.CalledProcessError, FileNotFoundError):
             _runner_instance = SimpleAgentRunner()
             logger.warning("Docker not available, using simple runner")
-    
+
     return _runner_instance

@@ -5,14 +5,14 @@ SQLite  → structured storage (projects, sessions, messages)
 ChromaDB → semantic vector store (RAG over conversation history)
 """
 
+import re
 import sqlite3
-import json
 from datetime import datetime
 from pathlib import Path
+
 import chromadb
-from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
-import re
+from sentence_transformers import SentenceTransformer
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -59,7 +59,7 @@ class HybridSearcher:
     def _load_from_db(self):
         with sqlite3.connect(DB_PATH) as conn:
             rows = conn.execute(
-                "SELECT filename, content FROM project_files WHERE project_id=?", 
+                "SELECT filename, content FROM project_files WHERE project_id=?",
                 (self.project_id,)
             ).fetchall()
             for filename, content in rows:
@@ -199,7 +199,7 @@ def update_session_messages(session_id: int, messages: list[dict]):
     with sqlite3.connect(DB_PATH) as conn:
         # Delete existing messages
         conn.execute("DELETE FROM messages WHERE session_id=?", (session_id,))
-        
+
         # Insert new messages
         for msg in messages:
             save_message(
@@ -316,7 +316,7 @@ def hybrid_search_rrf(query: str, project_id: int, session_id: int, n: int = 4) 
     """
     # 1. Vector results from files
     vec_results = search_project_files(query, project_id, n=n*2)
-    
+
     # 2. BM25 results from files
     bm25_results = _get_hybrid_searcher(project_id).search(query, n=n*2)
     bm25_texts = [r["text"] for r in bm25_results]
@@ -352,20 +352,21 @@ Be extremely concise. Output ONLY the bullets, no preamble."""
 
 async def compress_old_messages(session_id: int, keep_recent: int = 10, chat_fn = None):
     """Summarize messages older than the last N, replace them with a summary."""
-    if not chat_fn: return
+    if not chat_fn:
+        return
 
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
             "SELECT id, role, content FROM messages WHERE session_id=? ORDER BY id",
             (session_id,)
         ).fetchall()
-    
+
     msgs = [{"id": r[0], "role": r[1], "content": r[2]} for r in rows]
     if len(msgs) <= keep_recent + 5:
         return
 
     old  = msgs[:-keep_recent]
-    
+
     convo_text = "\n".join(f"{m['role'].upper()}: {m['content'][:300]}" for m in old)
     result = await chat_fn(
         messages=[{"role": "user", "content": convo_text}],
@@ -387,7 +388,8 @@ async def compress_old_messages(session_id: int, keep_recent: int = 10, chat_fn 
 
 def delete_last_n_messages(session_id: int, n: int):
     """Deletes the last n messages from a specific session to support Edit / Regenerate features."""
-    if n <= 0: return
+    if n <= 0:
+        return
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             "DELETE FROM messages WHERE id IN (SELECT id FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?)",
@@ -405,7 +407,7 @@ def index_file(project_id: int, filename: str, content: str):
                ON CONFLICT DO NOTHING""",
             (project_id, filename, content, _now()),
         )
-    
+
     # Update hybrid searcher
     _get_hybrid_searcher(project_id).add_local(content, {"filename": filename})
 

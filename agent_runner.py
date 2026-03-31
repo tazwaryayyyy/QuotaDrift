@@ -1,7 +1,7 @@
+import os
 import subprocess
 import tempfile
-import pathlib
-import os
+
 
 def run_code(code: str, language: str, timeout: int = 5) -> dict:
     """
@@ -44,7 +44,7 @@ def _run_javascript(code: str, timeout: int) -> dict:
     # Check if node is installed
     try:
         subprocess.run(["node", "--version"], capture_output=True, check=True)
-    except:
+    except (subprocess.CalledProcessError, FileNotFoundError):
         return {"error": "Node.js is not installed on the host."}
 
     with tempfile.NamedTemporaryFile(suffix=".js", delete=False) as tmp:

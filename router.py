@@ -7,9 +7,9 @@ Wraps the LiteLLM Router to add:
 - Clean model ID extraction from streamed chunks
 """
 
-import os
 from dotenv import load_dotenv
 from litellm import Router
+
 import config
 import model_manager
 
@@ -39,35 +39,35 @@ async def chat(messages: list[dict], system: str | None = None) -> dict:
     Returns: {"content": str, "model_used": str, "tokens": int}
     """
     request_id = model_manager.get_request_id()
-    
+
     # Get best available model
     slot_name = model_manager.model_manager.get_best_model(request_id)
     if not slot_name:
         raise Exception("No models available - all circuits open or rate limited")
-    
+
     # Start request tracking
-    trace = model_manager.model_manager.start_request(slot_name, request_id)
-    
+    model_manager.model_manager.start_request(slot_name, request_id)
+
     full_messages = _prepend_system(messages, system)
-    
+
     try:
         response = await get_router().acompletion(
             model=slot_name,
             messages=full_messages,
         )
-        
+
         model_id = response.model or "unknown"
         tokens = response.usage.total_tokens if response.usage else 0
-        
+
         # Record success
         model_manager.model_manager.record_success(slot_name, request_id, tokens)
-        
+
         # Update rate limits if available
         if hasattr(response, 'headers'):
             remaining = response.headers.get('x-ratelimit-remaining')
             reset = response.headers.get('x-ratelimit-reset')
             model_manager.model_manager.update_rate_limit(slot_name, remaining, reset)
-        
+
         return {
             "content":    response.choices[0].message.content,
             "model_used": model_id,
@@ -88,18 +88,17 @@ async def stream_chat(messages: list[dict], system: str | None = None):
       {"type": "error",  "message": "..."}
     """
     import time
-    from datetime import datetime, timedelta
 
     request_id = model_manager.get_request_id()
-    
+
     # Get best available model
     slot_name = model_manager.model_manager.get_best_model(request_id)
     if not slot_name:
         yield {"type": "error", "message": "No models available - all circuits open or rate limited"}
         return
-    
+
     # Start request tracking
-    trace = model_manager.model_manager.start_request(slot_name, request_id)
+    model_manager.model_manager.start_request(slot_name, request_id)
 
     full_messages = _prepend_system(messages, system)
     model_used = "unknown"
@@ -135,7 +134,7 @@ async def stream_chat(messages: list[dict], system: str | None = None):
 
         # Record success and update metrics
         model_manager.model_manager.record_success(slot_name, request_id, token_count)
-        
+
         # Update rate limits if available
         try:
             if hasattr(response, "_response_object") and hasattr(response._response_object, "headers"):
@@ -143,7 +142,8 @@ async def stream_chat(messages: list[dict], system: str | None = None):
                 remaining = headers.get("x-ratelimit-remaining-requests") or headers.get("x-ratelimit-remaining")
                 reset = headers.get("x-ratelimit-reset-requests") or headers.get("x-ratelimit-reset")
                 model_manager.model_manager.update_rate_limit(slot_name, remaining, reset)
-        except: pass
+        except Exception:
+            pass
 
         yield {"type": "done", "model": model_used, "tokens": token_count}
 
@@ -167,7 +167,7 @@ def _update_rate_limits(slot: str, headers: dict):
     # Common header patterns
     remaining = headers.get("x-ratelimit-remaining-requests") or headers.get("x-ratelimit-remaining")
     reset     = headers.get("x-ratelimit-reset-requests") or headers.get("x-ratelimit-reset")
-    
+
     if slot in config.health:
         if remaining is not None:
             config.health[slot]["rl_remaining"] = int(remaining)
@@ -176,7 +176,8 @@ def _update_rate_limits(slot: str, headers: dict):
             try:
                 # reset is often seconds until reset
                 config.health[slot]["rl_reset_at"] = (datetime.utcnow() + timedelta(seconds=float(reset))).isoformat()
-            except: pass
+            except Exception:
+                pass
 
 def _prepend_system(messages: list[dict], system: str | None) -> list[dict]:
     if not system:
