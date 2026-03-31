@@ -15,7 +15,7 @@ Thank you for your interest in contributing to QuotaDrift! This document provide
 
 1. **Fork and Clone**
    ```bash
-   git clone https://github.com/your-username/quotadrift.git
+   git clone https://github.com/tazwaryayyyy/quotadrift.git
    cd quotadrift
    ```
 
@@ -385,8 +385,9 @@ We welcome contributions in these areas:
 
 ## 📞 Contact
 
-- **Maintainers**: Listed in README.md
+- **Maintainers**: [Tazwar Yayyyy](https://github.com/tazwaryayyyy)
 - **Email**: Use GitHub Discussions for public questions
+- **Issues**: [GitHub Issues](https://github.com/tazwaryayyyy/quotadrift/issues)
 - **Security**: Report security issues privately
 
 ---

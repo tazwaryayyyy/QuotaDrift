@@ -4,6 +4,9 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green.svg)](https://fastapi.tiangolo.com/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
+[![Maintained by Tazwar Yayyyy](https://img.shields.io/badge/Maintained%20by-Tazwar%20Yayyyy-blue)](https://github.com/tazwaryayyyy)
+
+> Created by [Tazwar Yayyyy](https://github.com/tazwaryayyyy) – built with ❤️ and a lot of API keys.
 
 **QuotaDrift** is a self-hosted AI orchestration layer that provides automatic failover across 8 free-tier LLM providers. Built for developers who need high-reliability LLM access with zero downtime.
 
@@ -71,7 +74,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/quotadrift.git
+git clone https://github.com/tazwaryayyyy/quotadrift.git
 cd quotadrift
 
 # Create virtual environment
@@ -248,7 +251,12 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## � Maintainer
+
+- **Tazwar Yayyyy** – creator and lead maintainer  
+  [GitHub](https://github.com/tazwaryayyyy)
+
+## �🙏 Acknowledgments
 
 - [LiteLLM](https://github.com/BerriAI/litellm) - AI model routing
 - [ChromaDB](https://github.com/chroma-core/chroma) - Vector database
@@ -258,12 +266,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/your-username/quotadrift/issues)
-- 💡 **Feature Requests**: [GitHub Discussions](https://github.com/your-username/quotadrift/discussions)
-- 📖 **Documentation**: [Wiki](https://github.com/your-username/quotadrift/wiki)
+- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/tazwaryayyyy/quotadrift/issues)
+- 💡 **Feature Requests**: [GitHub Discussions](https://github.com/tazwaryayyyy/quotadrift/discussions)
+- 📖 **Documentation**: [Wiki](https://github.com/tazwaryayyyy/quotadrift/wiki)
 
 ---
 
 **QuotaDrift** - Never worry about AI quota limits again. 🚀
 
-*Built with ❤️ by the QuotaDrift community*
+*Built with ❤️ by Tazwar Yayyyy and the QuotaDrift community*
