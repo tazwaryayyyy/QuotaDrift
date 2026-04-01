@@ -120,7 +120,40 @@ CLOUDFLARE_ACCOUNT_ID=your_account_id_here
 OPENROUTER_API_KEY=sk-or-your_key_here
 ```
 
-## � Docker Deployment
+## 🎨 Modern Web Interface
+
+QuotaDrift features a clean, professional web interface built with modern design principles:
+
+### **Design Features**
+- 🎯 **Human-Centered Design** - Clean, readable interface without AI-generated aesthetics
+- 🌙 **Dark Theme** - Professional dark mode with subtle color palette
+- 📱 **Responsive Layout** - Works seamlessly on desktop, tablet, and mobile
+- 🔧 **Resizable Panels** - Customizable sidebar and model panel widths
+- ⚡ **Real-time Updates** - Live model status and streaming responses
+
+### **Interface Components**
+- **Three-Column Layout** - Sidebar (sessions) | Main chat | Model panel
+- **Session Management** - Create, load, and switch between conversation sessions
+- **Model Pool Dashboard** - Real-time provider health, latency, and usage metrics
+- **Code Runner** - Execute code in multiple languages directly in the interface
+- **File Indexing** - Drag-and-drop codebase indexing for enhanced RAG
+- **Semantic Cache** - View and manage conversation cache statistics
+
+### **User Experience**
+- **Markdown Rendering** - Rich text formatting with syntax highlighting
+- **Copy Buttons** - One-click code snippet copying
+- **Context Display** - Expandable RAG context snippets
+- **Toast Notifications** - Non-intrusive feedback messages
+- **Keyboard Shortcuts** - Enter to send, Shift+Enter for newlines
+
+### **Mobile Support**
+- **Collapsible Panels** - Slide-out sidebar and model panel on mobile
+- **Touch-Friendly** - Optimized buttons and interactions
+- **Adaptive Layout** - Responsive design for all screen sizes
+
+Visit **http://localhost:8000** to experience the modern interface!
+
+## 🐳 Docker Deployment
 
 ```bash
 # Build and run

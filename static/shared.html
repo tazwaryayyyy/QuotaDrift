@@ -1,528 +1,500 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shared Session - QuotaDrift</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shared Session - QuotaDrift</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+
+<style>
+  :root {
+    --bg-base:      #09090b;
+    --bg-surface:   #0f0f12;
+    --bg-elevated:  #18181b;
+    --bg-hover:     #1f1f23;
+    --bg-active:    #27272a;
+
+    --border:       #27272a;
+    --border-hover: #3f3f46;
+
+    --accent:       #6366f1;
+    --accent-hover: #818cf8;
+    --accent-muted: rgba(99, 102, 241, 0.15);
+
+    --green:        #22c55e;
+    --green-muted:  rgba(34, 197, 94, 0.12);
+    --amber:        #f59e0b;
+    --amber-muted:  rgba(245, 158, 11, 0.12);
+    --red:          #ef4444;
+    --red-muted:    rgba(239, 68, 68, 0.12);
+
+    --text-primary:   #fafafa;
+    --text-secondary: #a1a1aa;
+    --text-tertiary:  #71717a;
+    --text-muted:     #52525b;
+
+    --font-sans:  'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono:  'JetBrains Mono', 'SF Mono', monospace;
+
+    --radius-sm:  6px;
+    --radius-md:  8px;
+    --radius-lg:  10px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    font-family: var(--font-sans);
+    background: var(--bg-base);
+    color: var(--text-primary);
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 20px;
+    min-height: 100vh;
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 40px;
+  }
+
+  .logo {
+    font-family: var(--font-mono);
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+  }
+
+  .subtitle {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin-bottom: 20px;
+  }
+
+  .session-info {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    margin-bottom: 24px;
+  }
+
+  .session-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 12px;
+  }
+
+  .session-meta {
+    display: flex;
+    gap: 20px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    flex-wrap: wrap;
+  }
+
+  .meta-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .messages {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .message {
+    display: flex;
+    gap: 12px;
+  }
+
+  .message.user {
+    flex-direction: row-reverse;
+  }
+
+  .message-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .message.user .message-avatar {
+    background: var(--accent-muted);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+  }
+
+  .message.assistant .message-avatar {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text-tertiary);
+  }
+
+  .message-content {
+    max-width: 80%;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px 20px;
+  }
+
+  .message.user .message-content {
+    background: var(--accent-muted);
+    border-color: rgba(99, 102, 241, 0.2);
+  }
+
+  .message-role {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-tertiary);
+    margin-bottom: 8px;
+  }
+
+  .message-text {
+    line-height: 1.7;
+    font-size: 14px;
+    color: var(--text-primary);
+  }
+
+  .message-text p {
+    margin-bottom: 10px;
+  }
+
+  .message-text p:last-child {
+    margin-bottom: 0;
+  }
+
+  .message-text pre {
+    position: relative;
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    margin: 12px 0;
+  }
+
+  .message-text pre code {
+    display: block;
+    overflow-x: auto;
+    padding: 16px 18px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .message-text code:not(pre code) {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--bg-hover);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--accent-hover);
+  }
+
+  .lang-label {
+    position: absolute;
+    top: 10px; left: 16px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .copy-btn {
+    position: absolute;
+    top: 10px; right: 10px;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text-tertiary);
+    font-size: 11px;
+    font-family: var(--font-sans);
+    cursor: pointer;
+    transition: all 0.1s;
+    z-index: 1;
+  }
+
+  .copy-btn:hover { 
+    border-color: var(--border-hover); 
+    color: var(--text-secondary);
+  }
+
+  .copy-btn.copied { 
+    color: var(--green); 
+    border-color: var(--green);
+  }
+
+  .share-info {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    margin-top: 24px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-align: center;
+  }
+
+  .loading {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-secondary);
+  }
+
+  .error {
+    background: var(--red-muted);
+    border: 1px solid var(--red);
+    border-radius: var(--radius-md);
+    padding: 20px;
+    text-align: center;
+    color: var(--red);
+  }
+
+  @media (max-width: 768px) {
+    .container {
+      padding: 20px 16px;
+    }
     
-    <style>
-        :root {
-            /* Same theme as main app */
-            --bg0:      #0a0e1a;
-            --bg1:      #0f1729;
-            --bg2:      #1a1f3a;
-            --bg3:      #242b4d;
-            --bg4:      #2d3561;
-            --border:   #3a4566;
-            --border2:  #4a5a7a;
-            --border3:  #5a6a8a;
-
-            --neon-cyan:    #00d4ff;
-            --neon-purple:  #a855f7;
-            --neon-emerald: #10b981;
-            --neon-pink:    #ec4899;
-            --neon-amber:   #f59e0b;
-            
-            --accent:   var(--neon-cyan);
-            --accent2:  #0ea5e9;
-            --green:    var(--neon-emerald);
-            --amber:    var(--neon-amber);
-            --red:      #f87171;
-            --purple:   var(--neon-purple);
-
-            --glass-bg:    rgba(26, 31, 58, 0.7);
-            --glass-border: rgba(58, 69, 102, 0.5);
-            --glass-shadow: 0 8px 32px rgba(0, 212, 255, 0.1);
-
-            --text0:    #e2e8f0;
-            --text1:    #cbd5e1;
-            --text2:    #94a3b8;
-            --text3:    #64748b;
-
-            --font-ui:  'Outfit', sans-serif;
-            --font-mono:'JetBrains Mono', monospace;
-
-            --radius:   12px;
-            --radius-lg: 16px;
-        }
-
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-        html, body {
-            height: 100%;
-            font-family: var(--font-ui);
-            background: linear-gradient(135deg, var(--bg0) 0%, var(--bg1) 100%);
-            color: var(--text0);
-            overflow-x: hidden;
-        }
-
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            background: 
-                radial-gradient(circle at 20% 50%, rgba(0, 212, 255, 0.1) 0%, transparent 50%),
-                radial-gradient(circle at 80% 80%, rgba(168, 85, 247, 0.1) 0%, transparent 50%),
-                radial-gradient(circle at 40% 20%, rgba(16, 185, 129, 0.1) 0%, transparent 50%);
-            pointer-events: none;
-            z-index: -1;
-        }
-
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 40px 20px;
-            min-height: 100vh;
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 40px;
-        }
-
-        .logo {
-            font-family: var(--font-mono);
-            font-size: 32px;
-            font-weight: 700;
-            background: linear-gradient(135deg, var(--accent), var(--purple));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            letter-spacing: .1em;
-            text-shadow: 0 0 30px rgba(0, 212, 255, 0.5);
-            margin-bottom: 8px;
-        }
-
-        .subtitle {
-            color: var(--text2);
-            font-size: 14px;
-            margin-bottom: 20px;
-        }
-
-        .session-info {
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
-            border: 1px solid var(--glass-border);
-            border-radius: var(--radius-lg);
-            padding: 20px;
-            margin-bottom: 24px;
-            box-shadow: var(--glass-shadow);
-        }
-
-        .session-title {
-            font-size: 18px;
-            font-weight: 600;
-            color: var(--text0);
-            margin-bottom: 8px;
-        }
-
-        .session-meta {
-            display: flex;
-            gap: 20px;
-            font-size: 12px;
-            color: var(--text2);
-            flex-wrap: wrap;
-        }
-
-        .meta-item {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .messages {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        .message {
-            display: flex;
-            gap: 12px;
-        }
-
-        .message.user {
-            flex-direction: row-reverse;
-        }
-
-        .message-avatar {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 14px;
-            flex-shrink: 0;
-        }
-
-        .message.user .message-avatar {
-            background: linear-gradient(135deg, var(--bg3), var(--bg4));
-            border: 1px solid var(--border2);
-        }
-
-        .message.assistant .message-avatar {
-            background: var(--glass-bg);
-            border: 1px solid var(--glass-border);
-            color: var(--accent);
-        }
-
-        .message-content {
-            max-width: 80%;
-            background: var(--glass-bg);
-            backdrop-filter: blur(15px);
-            border: 1px solid var(--glass-border);
-            border-radius: var(--radius-lg);
-            padding: 16px 20px;
-            box-shadow: var(--glass-shadow);
-        }
-
-        .message.user .message-content {
-            background: linear-gradient(135deg, var(--bg3), var(--bg4));
-            border: 1px solid var(--border2);
-        }
-
-        .message-role {
-            font-size: 10px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text2);
-            margin-bottom: 8px;
-        }
-
-        .message-text {
-            line-height: 1.7;
-            font-size: 14px;
-            color: var(--text0);
-        }
-
-        .message-text p {
-            margin-bottom: 10px;
-        }
-
-        .message-text p:last-child {
-            margin-bottom: 0;
-        }
-
-        .message-text pre {
-            position: relative;
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            overflow: hidden;
-            margin: 12px 0;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-        }
-
-        .message-text pre code {
-            display: block;
-            overflow-x: auto;
-            padding: 16px 18px;
-            font-family: var(--font-mono);
-            font-size: 12.5px;
-            line-height: 1.6;
-        }
-
-        .message-text code:not(pre code) {
-            font-family: var(--font-mono);
-            font-size: 12.5px;
-            background: var(--bg3);
-            padding: 2px 6px;
-            border-radius: 4px;
-            color: var(--accent);
-        }
-
-        .lang-label {
-            position: absolute;
-            top: 10px; left: 16px;
-            font-family: var(--font-mono);
-            font-size: 10px;
-            color: var(--text2);
-            letter-spacing: .05em;
-            text-transform: uppercase;
-        }
-
-        .copy-btn {
-            position: absolute;
-            top: 10px; right: 10px;
-            padding: 6px 10px;
-            border-radius: 6px;
-            border: 1px solid var(--glass-border);
-            background: var(--glass-bg);
-            backdrop-filter: blur(10px);
-            color: var(--text1);
-            font-size: 11px;
-            font-family: var(--font-ui);
-            cursor: pointer;
-            transition: all 0.2s;
-            z-index: 1;
-        }
-
-        .copy-btn:hover { 
-            border-color: var(--accent); 
-            color: var(--accent);
-            background: rgba(0, 212, 255, 0.1);
-        }
-
-        .copy-btn.copied { 
-            color: var(--green); 
-            border-color: var(--green);
-            background: rgba(16, 185, 129, 0.1);
-        }
-
-        .share-info {
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
-            border: 1px solid var(--glass-border);
-            border-radius: var(--radius-lg);
-            padding: 16px;
-            margin-top: 24px;
-            font-size: 12px;
-            color: var(--text2);
-            text-align: center;
-        }
-
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: var(--text2);
-        }
-
-        .error {
-            background: rgba(248, 113, 113, 0.1);
-            border: 1px solid var(--red);
-            border-radius: var(--radius);
-            padding: 20px;
-            text-align: center;
-            color: var(--red);
-        }
-
-        @media (max-width: 768px) {
-            .container {
-                padding: 20px 16px;
-            }
-            
-            .message-content {
-                max-width: 90%;
-            }
-            
-            .session-meta {
-                flex-direction: column;
-                gap: 8px;
-            }
-        }
-    </style>
+    .message-content {
+      max-width: 90%;
+    }
+    
+    .session-meta {
+      flex-direction: column;
+      gap: 8px;
+    }
+  }
+</style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">⚡ SWITCHBOARD</div>
-            <div class="subtitle">Shared Session - Read Only</div>
-        </div>
-
-        <div id="loading" class="loading">
-            Loading shared session...
-        </div>
-
-        <div id="error" class="error" style="display: none;">
-            <h3>Session Not Found</h3>
-            <p>This share link may have expired or been removed.</p>
-        </div>
-
-        <div id="content" style="display: none;">
-            <div class="session-info">
-                <div class="session-title" id="session-title">Untitled Session</div>
-                <div class="session-meta">
-                    <div class="meta-item">
-                        <span>📁</span>
-                        <span id="project-name">Unknown Project</span>
-                    </div>
-                    <div class="meta-item">
-                        <span>🤖</span>
-                        <span id="model-used">Unknown Model</span>
-                    </div>
-                    <div class="meta-item">
-                        <span>📅</span>
-                        <span id="created-date">Unknown Date</span>
-                    </div>
-                    <div class="meta-item">
-                        <span>👁️</span>
-                        <span id="view-count">0 views</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="messages" id="messages">
-                <!-- Messages will be loaded here -->
-            </div>
-
-            <div class="share-info">
-                <div>Shared via QuotaDrift Multi-AI Switchboard</div>
-                <div id="share-meta" style="margin-top: 4px;">
-                    <!-- Share metadata will be loaded here -->
-                </div>
-            </div>
-        </div>
+  <div class="container">
+    <div class="header">
+      <div class="logo">QUOTADRIFT</div>
+      <div class="subtitle">Shared Session - Read Only</div>
     </div>
 
-    <script>
-        // Configure marked
-        marked.setOptions({
-            highlight: function(code, lang) {
-                if (lang && hljs.getLanguage(lang)) {
-                    return hljs.highlight(code, { language: lang }).value;
-                }
-                return hljs.highlightAuto(code).value;
-            },
-            breaks: true,
-            gfm: true,
+    <div id="loading" class="loading">
+      Loading shared session...
+    </div>
+
+    <div id="error" class="error" style="display: none;">
+      <h3>Session Not Found</h3>
+      <p>This share link may have expired or been removed.</p>
+    </div>
+
+    <div id="content" style="display: none;">
+      <div class="session-info">
+        <div class="session-title" id="session-title">Untitled Session</div>
+        <div class="session-meta">
+          <div class="meta-item">
+            <span>📁</span>
+            <span id="project-name">Unknown Project</span>
+          </div>
+          <div class="meta-item">
+            <span>🤖</span>
+            <span id="model-used">Unknown Model</span>
+          </div>
+          <div class="meta-item">
+            <span>📅</span>
+            <span id="created-date">Unknown Date</span>
+          </div>
+          <div class="meta-item">
+            <span>👁️</span>
+            <span id="view-count">0 views</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="messages" id="messages">
+        <!-- Messages will be loaded here -->
+      </div>
+
+      <div class="share-info">
+        <div>Shared via QuotaDrift Multi-AI Switchboard</div>
+        <div id="share-meta" style="margin-top: 4px;">
+          <!-- Share metadata will be loaded here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Configure marked
+    marked.setOptions({
+      highlight: function(code, lang) {
+        if (lang && hljs.getLanguage(lang)) {
+          return hljs.highlight(code, { language: lang }).value;
+        }
+        return hljs.highlightAuto(code).value;
+      },
+      breaks: true,
+      gfm: true,
+    });
+
+    // Get token from URL
+    const token = window.location.pathname.split('/shared/')[1];
+    
+    if (!token) {
+      showError();
+    } else {
+      loadSharedSession(token);
+    }
+
+    async function loadSharedSession(token) {
+      try {
+        const response = await fetch(`/api/shared/${token}`);
+        
+        if (!response.ok) {
+          throw new Error('Session not found');
+        }
+
+        const data = await response.json();
+        renderSharedSession(data);
+        
+      } catch (error) {
+        console.error('Error loading shared session:', error);
+        showError();
+      }
+    }
+
+    function renderSharedSession(data) {
+      const session = data.session;
+      const messages = data.messages;
+      const shareInfo = data.share_info;
+
+      // Update session info
+      document.getElementById('session-title').textContent = session.title;
+      document.getElementById('project-name').textContent = session.project.name;
+      document.getElementById('model-used').textContent = getModelDisplay(session.model);
+      document.getElementById('view-count').textContent = `${shareInfo.access_count} views`;
+      
+      if (session.created_at) {
+        const date = new Date(session.created_at);
+        document.getElementById('created-date').textContent = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+      }
+
+      // Update share info
+      const createdDate = new Date(shareInfo.created_at);
+      const expiresDate = new Date(shareInfo.expires_at);
+      
+      document.getElementById('share-meta').innerHTML = `
+        Created: ${createdDate.toLocaleString()} | 
+        Expires: ${expiresDate.toLocaleString()} | 
+        Accessed: ${shareInfo.access_count} times
+      `;
+
+      // Render messages
+      const messagesContainer = document.getElementById('messages');
+      messagesContainer.innerHTML = '';
+
+      messages.forEach(msg => {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${msg.role}`;
+        
+        const avatar = msg.role === 'user' ? '👤' : '🤖';
+        
+        messageDiv.innerHTML = `
+          <div class="message-avatar">${avatar}</div>
+          <div class="message-content">
+            <div class="message-role">${msg.role}</div>
+            <div class="message-text">${parseMarkdown(msg.content || '')}</div>
+          </div>
+        `;
+        
+        messagesContainer.appendChild(messageDiv);
+      });
+
+      // Add copy buttons to code blocks
+      addCopyButtons();
+
+      // Show content, hide loading
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('content').style.display = 'block';
+    }
+
+    function parseMarkdown(text) {
+      return marked.parse(text || '');
+    }
+
+    function addCopyButtons() {
+      document.querySelectorAll('pre code').forEach(block => {
+        const pre = block.parentElement;
+        const lang = block.className.replace('language-', '') || 'text';
+        
+        // Add language label
+        const langLabel = document.createElement('div');
+        langLabel.className = 'lang-label';
+        langLabel.textContent = lang;
+        pre.appendChild(langLabel);
+
+        // Add copy button
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'copy-btn';
+        copyBtn.textContent = 'Copy';
+        
+        copyBtn.addEventListener('click', () => {
+          navigator.clipboard.writeText(block.textContent).then(() => {
+            copyBtn.textContent = 'Copied!';
+            copyBtn.classList.add('copied');
+            
+            setTimeout(() => {
+              copyBtn.textContent = 'Copy';
+              copyBtn.classList.remove('copied');
+            }, 2000);
+          });
         });
 
-        // Get token from URL
-        const token = window.location.pathname.split('/shared/')[1];
-        
-        if (!token) {
-            showError();
-        } else {
-            loadSharedSession(token);
-        }
+        pre.appendChild(copyBtn);
+        hljs.highlightElement(block);
+      });
+    }
 
-        async function loadSharedSession(token) {
-            try {
-                const response = await fetch(`/api/shared/${token}`);
-                
-                if (!response.ok) {
-                    throw new Error('Session not found');
-                }
+    function getModelDisplay(modelId) {
+      if (!modelId) return 'Unknown Model';
+      
+      const displays = {
+        'groq/llama-3.3-70b-versatile': 'Groq · Llama 3.3 70B',
+        'openai/gpt-4o-mini': 'GitHub · GPT-4o mini',
+        'openai/meta-llama-3.3-70b-instruct': 'GitHub · Llama 3.3 70B',
+        'mistral/mistral-small-latest': 'Mistral · Mistral Small',
+        'openai/Qwen2.5-7B-Instruct': 'Silicon Flow · Qwen2.5-7B',
+        'huggingface/mistralai/Mistral-7B-Instruct-v0.3': 'Hugging Face · Mistral-7B',
+        'cloudflare/@cf/meta/llama-3.3-70b-instruct': 'Cloudflare · Llama 3.3 70B',
+        'openrouter/mistralai/mistral-7b-instruct:free': 'OpenRouter · Mistral 7B',
+      };
+      
+      return displays[modelId] || modelId.split('/').pop() || modelId;
+    }
 
-                const data = await response.json();
-                renderSharedSession(data);
-                
-            } catch (error) {
-                console.error('Error loading shared session:', error);
-                showError();
-            }
-        }
-
-        function renderSharedSession(data) {
-            const session = data.session;
-            const messages = data.messages;
-            const shareInfo = data.share_info;
-
-            // Update session info
-            document.getElementById('session-title').textContent = session.title;
-            document.getElementById('project-name').textContent = session.project.name;
-            document.getElementById('model-used').textContent = getModelDisplay(session.model);
-            document.getElementById('view-count').textContent = `${shareInfo.access_count} views`;
-            
-            if (session.created_at) {
-                const date = new Date(session.created_at);
-                document.getElementById('created-date').textContent = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
-            }
-
-            // Update share info
-            const createdDate = new Date(shareInfo.created_at);
-            const expiresDate = new Date(shareInfo.expires_at);
-            
-            document.getElementById('share-meta').innerHTML = `
-                Created: ${createdDate.toLocaleString()} | 
-                Expires: ${expiresDate.toLocaleString()} | 
-                Accessed: ${shareInfo.access_count} times
-            `;
-
-            // Render messages
-            const messagesContainer = document.getElementById('messages');
-            messagesContainer.innerHTML = '';
-
-            messages.forEach(msg => {
-                const messageDiv = document.createElement('div');
-                messageDiv.className = `message ${msg.role}`;
-                
-                const avatar = msg.role === 'user' ? '👤' : '🤖';
-                
-                messageDiv.innerHTML = `
-                    <div class="message-avatar">${avatar}</div>
-                    <div class="message-content">
-                        <div class="message-role">${msg.role}</div>
-                        <div class="message-text">${parseMarkdown(msg.content || '')}</div>
-                    </div>
-                `;
-                
-                messagesContainer.appendChild(messageDiv);
-            });
-
-            // Add copy buttons to code blocks
-            addCopyButtons();
-
-            // Show content, hide loading
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('content').style.display = 'block';
-        }
-
-        function parseMarkdown(text) {
-            return marked.parse(text || '');
-        }
-
-        function addCopyButtons() {
-            document.querySelectorAll('pre code').forEach(block => {
-                const pre = block.parentElement;
-                const lang = block.className.replace('language-', '') || 'text';
-                
-                // Add language label
-                const langLabel = document.createElement('div');
-                langLabel.className = 'lang-label';
-                langLabel.textContent = lang;
-                pre.appendChild(langLabel);
-
-                // Add copy button
-                const copyBtn = document.createElement('button');
-                copyBtn.className = 'copy-btn';
-                copyBtn.textContent = 'Copy';
-                
-                copyBtn.addEventListener('click', () => {
-                    navigator.clipboard.writeText(block.textContent).then(() => {
-                        copyBtn.textContent = 'Copied!';
-                        copyBtn.classList.add('copied');
-                        
-                        setTimeout(() => {
-                            copyBtn.textContent = 'Copy';
-                            copyBtn.classList.remove('copied');
-                        }, 2000);
-                    });
-                });
-
-                pre.appendChild(copyBtn);
-                hljs.highlightElement(block);
-            });
-        }
-
-        function getModelDisplay(modelId) {
-            if (!modelId) return 'Unknown Model';
-            
-            const displays = {
-                'groq/llama-3.3-70b-versatile': 'Groq · Llama 3.3 70B',
-                'openai/gpt-4o-mini': 'GitHub · GPT-4o mini',
-                'openai/meta-llama-3.3-70b-instruct': 'GitHub · Llama 3.3 70B',
-                'mistral/mistral-small-latest': 'Mistral · Mistral Small',
-                'openai/Qwen2.5-7B-Instruct': 'Silicon Flow · Qwen2.5-7B',
-                'huggingface/mistralai/Mistral-7B-Instruct-v0.3': 'Hugging Face · Mistral-7B',
-                'cloudflare/@cf/meta/llama-3.3-70b-instruct': 'Cloudflare · Llama 3.3 70B',
-                'openrouter/mistralai/mistral-7b-instruct:free': 'OpenRouter · Mistral 7B',
-            };
-            
-            return displays[modelId] || modelId.split('/').pop() || modelId;
-        }
-
-        function showError() {
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('error').style.display = 'block';
-        }
-    </script>
+    function showError() {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('error').style.display = 'block';
+    }
+  </script>
 </body>
 </html>
