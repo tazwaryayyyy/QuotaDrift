@@ -6,7 +6,6 @@ import config
 import router as ai_router
 from contract_models import DecisionResult, RequestContract
 
-
 TOKENS_PER_REQUEST_ESTIMATE = 1200
 
 # Conservative per-1k token prices for deterministic contract checks.
@@ -398,7 +397,7 @@ async def execute_single(
             "error": None,
             "error_code": None,
         }
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {
             "success": False,
             "content": "",
