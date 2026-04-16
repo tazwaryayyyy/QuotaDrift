@@ -24,28 +24,33 @@ CHROMA_DIR = BASE_DIR / "chroma_store"
 # ---------------------------------------------------------------------------
 # Lazy singletons — only loaded once per process
 # ---------------------------------------------------------------------------
-_embedder: SentenceTransformer | None = None
-_chroma_col = None
-_hybrid_searchers: dict[int, "HybridSearcher"] = {}  # project_id -> HybridSearcher
+_state: dict[str, object | None] = {
+    "embedder": None,
+    "chroma_col": None,
+}
+# project_id -> HybridSearcher
+_hybrid_searchers: dict[int, "HybridSearcher"] = {}
 
 
 def _get_embedder() -> SentenceTransformer:
-    global _embedder
-    if _embedder is None:
+    embedder = _state["embedder"]
+    if embedder is None:
         # 80MB model, CPU-friendly, good for semantic similarity
-        _embedder = SentenceTransformer("all-MiniLM-L6-v2")
-    return _embedder
+        embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        _state["embedder"] = embedder
+    return embedder  # type: ignore[return-value]
 
 
 def _get_collection():
-    global _chroma_col
-    if _chroma_col is None:
+    collection = _state["chroma_col"]
+    if collection is None:
         client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-        _chroma_col = client.get_or_create_collection(
+        collection = client.get_or_create_collection(
             name="switchboard_memory",
             metadata={"hnsw:space": "cosine"},
         )
-    return _chroma_col
+        _state["chroma_col"] = collection
+    return collection
 
 
 class HybridSearcher:
@@ -68,7 +73,8 @@ class HybridSearcher:
     def add_local(self, text: str, meta: dict):
         self._corpus.append(text)
         self._meta.append(meta)
-        tokenized_corpus = [re.findall(r"\w+", d.lower()) for d in self._corpus]
+        tokenized_corpus = [re.findall(r"\w+", d.lower())
+                            for d in self._corpus]
         self._bm25 = BM25Okapi(tokenized_corpus)
 
     def search(self, query: str, n: int = 5) -> list[dict]:
@@ -76,9 +82,11 @@ class HybridSearcher:
             return []
         tokens = re.findall(r"\w+", query.lower())
         scores = self._bm25.get_scores(tokens)
-        top_idx = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:n]
+        top_idx = sorted(range(len(scores)),
+                         key=lambda i: scores[i], reverse=True)[:n]
         return [
-            {"text": self._corpus[i], "meta": self._meta[i], "score": scores[i]}
+            {"text": self._corpus[i],
+                "meta": self._meta[i], "score": scores[i]}
             for i in top_idx
         ]
 
@@ -131,8 +139,26 @@ def init_db():
                 indexed_at  TEXT    NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS provider_outcomes (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id        TEXT    NOT NULL,
+                session_id        INTEGER NOT NULL REFERENCES sessions(id),
+                strategy          TEXT    NOT NULL,
+                selected_providers TEXT   NOT NULL,
+                winner_provider   TEXT    DEFAULT '',
+                success           INTEGER NOT NULL,
+                latency_ms        INTEGER NOT NULL,
+                tokens            INTEGER DEFAULT 0,
+                cost_usd          REAL    DEFAULT 0,
+                contract_met      INTEGER NOT NULL,
+                fallback_triggered INTEGER NOT NULL,
+                error             TEXT    DEFAULT '',
+                created_at        TEXT    NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
             CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
+            CREATE INDEX IF NOT EXISTS idx_outcomes_provider_time ON provider_outcomes(winner_provider, created_at DESC);
         """)
 
 
@@ -145,7 +171,8 @@ def upsert_project(name: str, description: str = "") -> int:
             "INSERT OR IGNORE INTO projects (name, description, created_at) VALUES (?,?,?)",
             (name, description, _now()),
         )
-        row = conn.execute("SELECT id FROM projects WHERE name=?", (name,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM projects WHERE name=?", (name,)).fetchone()
         return row[0]
 
 
@@ -158,6 +185,27 @@ def list_projects() -> list[dict]:
         {"id": r[0], "name": r[1], "description": r[2], "created_at": r[3]}
         for r in rows
     ]
+
+
+def get_projects() -> list[dict]:
+    """Backward-compatible alias used by readiness checks."""
+    return list_projects()
+
+
+def get_project(project_id: int) -> dict | None:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT id, name, description, created_at FROM projects WHERE id=?",
+            (project_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "name": row[1],
+        "description": row[2],
+        "created_at": row[3],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +260,6 @@ def update_session_messages(session_id: int, messages: list[dict]):
                 content=msg["content"],
                 model=msg.get("model", ""),
                 tokens=msg.get("tokens", 0),
-                context=msg.get("context", []),
             )
 
 
@@ -244,6 +291,29 @@ def list_sessions(project_id: int | None = None) -> list[dict]:
         }
         for r in rows
     ]
+
+
+def get_session(session_id: int) -> dict | None:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            """
+            SELECT id, project_id, title, created_at, updated_at, last_model
+            FROM sessions
+            WHERE id=?
+            """,
+            (session_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "project_id": row[1],
+        "title": row[2],
+        "created_at": row[3],
+        "updated_at": row[4],
+        "last_model": row[5],
+        "model": row[5],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +351,7 @@ def save_message(
                     }
                 ],
             )
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass  # Never crash on embedding failure
 
     return msg_id
@@ -324,12 +394,12 @@ def semantic_search(query: str, session_id: int, n: int = 3) -> list[str]:
             where={"session_id": session_id},
         )
         return results["documents"][0] if results["documents"] else []
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         return []
 
 
 def hybrid_search_rrf(
-    query: str, project_id: int, session_id: int, n: int = 4
+    query: str, project_id: int, _session_id: int, n: int = 4
 ) -> list[str]:
     """
     Reciprocal Rank Fusion of vector search + BM25 for file RAG.
@@ -363,7 +433,7 @@ async def rewrite_query(user_message: str, chat_fn) -> str:
             system=REWRITE_SYSTEM,
         )
         return result["content"].strip()
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         return user_message
 
 
@@ -389,7 +459,8 @@ async def compress_old_messages(session_id: int, keep_recent: int = 10, chat_fn=
 
     old = msgs[:-keep_recent]
 
-    convo_text = "\n".join(f"{m['role'].upper()}: {m['content'][:300]}" for m in old)
+    convo_text = "\n".join(
+        f"{m['role'].upper()}: {m['content'][:300]}" for m in old)
     result = await chat_fn(
         messages=[{"role": "user", "content": convo_text}],
         system=SUMMARIZE_SYSTEM,
@@ -442,7 +513,8 @@ def index_file(project_id: int, filename: str, content: str):
 
     # Embed each file as a chunk for RAG
     try:
-        vec = _get_embedder().encode(f"FILE: {filename}\n{content[:1000]}").tolist()
+        vec = _get_embedder().encode(
+            f"FILE: {filename}\n{content[:1000]}").tolist()
         col = _get_collection()
         doc_id = f"file_{project_id}_{filename}"
         col.upsert(
@@ -453,7 +525,7 @@ def index_file(project_id: int, filename: str, content: str):
                 {"project_id": project_id, "filename": filename, "type": "file"}
             ],
         )
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         pass
 
 
@@ -466,14 +538,15 @@ def search_project_files(query: str, project_id: int, n: int = 3) -> list[str]:
             where={"$and": [{"project_id": project_id}, {"type": "file"}]},
         )
         return results["documents"][0] if results["documents"] else []
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         return []
 
 
 def has_project_files(project_id: int) -> bool:
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
-            "SELECT 1 FROM project_files WHERE project_id=? LIMIT 1", (project_id,)
+            "SELECT 1 FROM project_files WHERE project_id=? LIMIT 1", (
+                project_id,)
         ).fetchone()
         return row is not None
 
@@ -495,6 +568,81 @@ def export_session_md(session_id: int) -> str:
         role = "**You**" if m["role"] == "user" else f"**AI** `{m['model']}`"
         lines.append(f"### {role}\n{m['content']}\n")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Contract outcomes
+# ---------------------------------------------------------------------------
+def save_provider_outcome(record: dict):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO provider_outcomes (
+                request_id,
+                session_id,
+                strategy,
+                selected_providers,
+                winner_provider,
+                success,
+                latency_ms,
+                tokens,
+                cost_usd,
+                contract_met,
+                fallback_triggered,
+                error,
+                created_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                record["request_id"],
+                record["session_id"],
+                record["strategy"],
+                ",".join(record.get("selected_providers", [])),
+                record.get("winner_provider") or "",
+                1 if record.get("success") else 0,
+                int(record.get("latency_ms", 0)),
+                int(record.get("tokens", 0)),
+                float(record.get("cost_usd", 0.0)),
+                1 if record.get("contract_met") else 0,
+                1 if record.get("fallback_triggered") else 0,
+                record.get("error") or "",
+                record.get("created_at", _now()),
+            ),
+        )
+
+
+def get_provider_window_stats(provider_slot: str, window_size: int = 50) -> dict:
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            """
+            SELECT success, latency_ms, cost_usd
+            FROM provider_outcomes
+            WHERE winner_provider=?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (provider_slot, window_size),
+        ).fetchall()
+
+    if not rows:
+        return {
+            "window_size": 0,
+            "success_rate": 1.0,
+            "avg_latency_ms": 0.0,
+            "avg_cost_usd": 0.0,
+        }
+
+    size = len(rows)
+    success_rate = sum(r[0] for r in rows) / size
+    avg_latency = sum(r[1] for r in rows) / size
+    avg_cost = sum(r[2] for r in rows) / size
+
+    return {
+        "window_size": size,
+        "success_rate": round(success_rate, 4),
+        "avg_latency_ms": round(avg_latency, 2),
+        "avg_cost_usd": round(avg_cost, 6),
+    }
 
 
 # ---------------------------------------------------------------------------

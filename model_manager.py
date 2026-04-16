@@ -26,7 +26,7 @@ try:
 except ImportError:
     # Fallback dummy metrics for testing
     class DummyMetric:
-        def labels(self, **kwargs):
+        def labels(self, **_kwargs):
             return self
 
         def inc(self):
@@ -70,6 +70,7 @@ class ModelMetrics:
 
     # Performance metrics
     recent_latencies: deque = field(default_factory=lambda: deque(maxlen=50))
+    recent_costs: deque = field(default_factory=lambda: deque(maxlen=50))
     recent_successes: deque = field(default_factory=lambda: deque(maxlen=100))
     recent_failures: deque = field(default_factory=lambda: deque(maxlen=100))
 
@@ -84,6 +85,7 @@ class ModelMetrics:
 
     # Scoring factors
     avg_latency_ms: float = 0.0
+    avg_cost_usd: float = 0.0
     success_rate: float = 1.0
     load_score: float = 0.0
     priority_score: float = 1.0
@@ -92,8 +94,8 @@ class ModelMetrics:
 class CircuitBreaker:
     """Circuit breaker implementation for individual models."""
 
-    def __init__(self, config: CircuitBreakerConfig):
-        self.config = config
+    def __init__(self, cb_config: CircuitBreakerConfig):
+        self.config = cb_config
         self.state = "closed"
         self.failure_count = 0
         self.last_failure_time = None
@@ -135,7 +137,7 @@ class CircuitBreaker:
                     seconds=self.config.recovery_timeout
                 )
                 logger.warning(
-                    f"Circuit breaker opened after {self.failure_count} failures"
+                    "Circuit breaker opened after %s failures", self.failure_count
                 )
         elif self.state == "half_open":
             self.state = "open"
@@ -214,7 +216,7 @@ class ModelManager:
         available = self.get_available_models()
 
         if not available:
-            logger.warning(f"No models available for request {request_id}")
+            logger.warning("No models available for request %s", request_id)
             return None
 
         # Calculate scores for available models
@@ -228,7 +230,10 @@ class ModelManager:
 
         best_model = scored_models[0][1]
         logger.info(
-            f"Selected model {best_model} with score {scored_models[0][2]:.3f} for request {request_id}"
+            "Selected model %s with score %.3f for request %s",
+            best_model,
+            scored_models[0][2],
+            request_id,
         )
 
         return best_model
@@ -275,7 +280,7 @@ class ModelManager:
         metrics.total_requests += 1
         metrics.last_used = datetime.utcnow()
 
-        logger.info(f"Started request {request_id} on model {slot_name}")
+        logger.info("Started request %s on model %s", request_id, slot_name)
 
         return trace
 
@@ -286,6 +291,7 @@ class ModelManager:
 
         trace = self.request_traces[request_id]
         end_time = time.monotonic()
+        now_ts = time.time()
         latency_ms = (end_time - trace["start_time"]) * 1000
 
         # Update circuit breaker
@@ -293,12 +299,13 @@ class ModelManager:
 
         # Update metrics
         metrics = self.metrics[slot_name]
-        metrics.recent_successes.append(end_time)
+        metrics.recent_successes.append(now_ts)
         metrics.recent_latencies.append(latency_ms)
 
         # Update Prometheus metrics
         MODEL_REQUESTS.labels(model=metrics.model_id, status="success").inc()
-        MODEL_LATENCY.labels(model=metrics.model_id).observe(latency_ms / 1000.0)
+        MODEL_LATENCY.labels(model=metrics.model_id).observe(
+            latency_ms / 1000.0)
         if tokens > 0:
             TOKEN_USAGE.labels(model=metrics.model_id).inc(tokens)
 
@@ -309,7 +316,9 @@ class ModelManager:
         del self.request_traces[request_id]
 
         logger.info(
-            f"Request {request_id} completed successfully in {latency_ms:.1f}ms"
+            "Request %s completed successfully in %.1fms",
+            request_id,
+            latency_ms,
         )
 
     def record_failure(self, slot_name: str, request_id: str, error: str):
@@ -317,7 +326,7 @@ class ModelManager:
         if request_id not in self.request_traces:
             return
 
-        end_time = time.monotonic()
+        now_ts = time.time()
 
         # Update circuit breaker
         self.circuit_breakers[slot_name].record_failure()
@@ -325,7 +334,7 @@ class ModelManager:
         # Update metrics
         metrics = self.metrics[slot_name]
         metrics.total_errors += 1
-        metrics.recent_failures.append(end_time)
+        metrics.recent_failures.append(now_ts)
 
         # Update Prometheus metrics
         MODEL_REQUESTS.labels(model=metrics.model_id, status="error").inc()
@@ -336,7 +345,9 @@ class ModelManager:
         # Clean up trace
         del self.request_traces[request_id]
 
-        logger.error(f"Request {request_id} failed on model {slot_name}: {error}")
+        logger.error(
+            "Request %s failed on model %s: %s", request_id, slot_name, error
+        )
 
     def update_rate_limit(
         self, slot_name: str, remaining: int | None, reset: str | None
@@ -350,7 +361,7 @@ class ModelManager:
                 metrics.rate_limit_reset = datetime.fromisoformat(
                     reset.replace("Z", "+00:00")
                 )
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 pass
 
     def _update_metrics(self, slot_name: str):
@@ -358,7 +369,8 @@ class ModelManager:
         metrics = self.metrics[slot_name]
 
         # Calculate success rate
-        total_recent = len(metrics.recent_successes) + len(metrics.recent_failures)
+        total_recent = len(metrics.recent_successes) + \
+            len(metrics.recent_failures)
         if total_recent > 0:
             metrics.success_rate = len(metrics.recent_successes) / total_recent
 
@@ -368,15 +380,46 @@ class ModelManager:
                 metrics.recent_latencies
             )
 
+        # Calculate average cost
+        if metrics.recent_costs:
+            metrics.avg_cost_usd = sum(
+                metrics.recent_costs) / len(metrics.recent_costs)
+
         # Calculate load score (requests per minute)
-        now = datetime.utcnow()
-        one_minute_ago = now - timedelta(minutes=1)
+        one_minute_ago_ts = time.time() - 60
         recent_requests = sum(
             1
             for success_time in metrics.recent_successes
-            if success_time >= one_minute_ago.timestamp()
+            if success_time >= one_minute_ago_ts
         )
-        metrics.load_score = min(1.0, recent_requests / 10.0)  # Normalize to 0-1
+        metrics.load_score = min(
+            1.0, recent_requests / 10.0)  # Normalize to 0-1
+
+    def record_contract_outcome(
+        self,
+        slot_name: str,
+        success: bool,
+        latency_ms: int,
+        cost_usd: float,
+    ):
+        """Update provider stats from contract-driven requests using a sliding window."""
+        metrics = self.metrics.get(slot_name)
+        if not metrics:
+            return
+
+        now_ts = time.time()
+        metrics.recent_latencies.append(float(latency_ms))
+        metrics.recent_costs.append(float(cost_usd))
+        metrics.total_requests += 1
+        metrics.last_used = datetime.utcnow()
+
+        if success:
+            metrics.recent_successes.append(now_ts)
+        else:
+            metrics.recent_failures.append(now_ts)
+            metrics.total_errors += 1
+
+        self._update_metrics(slot_name)
 
     def start_background_tasks(self):
         """Start background tasks when event loop is available."""
@@ -392,8 +435,8 @@ class ModelManager:
                 for slot_name in self.metrics:
                     self._update_metrics(slot_name)
                 await asyncio.sleep(30)  # Update every 30 seconds
-            except Exception as e:
-                logger.error(f"Error updating scores: {e}")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logger.error("Error updating scores: %s", e)
                 await asyncio.sleep(60)
 
     async def _cleanup_old_traces(self):
@@ -411,8 +454,8 @@ class ModelManager:
                     del self.request_traces[req_id]
 
                 await asyncio.sleep(60)  # Clean up every minute
-            except Exception as e:
-                logger.error(f"Error cleaning up traces: {e}")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logger.error("Error cleaning up traces: %s", e)
                 await asyncio.sleep(60)
 
     def get_health_snapshot(self) -> list[dict]:
@@ -446,6 +489,7 @@ class ModelManager:
                     "errors": metrics.total_errors,
                     "success_rate": metrics.success_rate,
                     "avg_latency_ms": metrics.avg_latency_ms,
+                    "avg_cost_usd": metrics.avg_cost_usd,
                     "last_used": (
                         metrics.last_used.isoformat() if metrics.last_used else None
                     ),

@@ -1,310 +1,178 @@
-# ⚡ QuotaDrift (Multi-AI Switchboard)
+# QuotaDrift
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green.svg)](https://fastapi.tiangolo.com/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
-[![Maintained by Tazwar Yayyyy](https://img.shields.io/badge/Maintained%20by-Tazwar%20Yayyyy-blue)](https://github.com/tazwaryayyyy)
+Contract-driven AI inference that enforces latency, reliability, and cost per request, then proves every routing decision with a trace.
 
-> Created by [Tazwar Yayyyy](https://github.com/tazwaryayyyy) – built with ❤️ and a lot of API keys.
+## 1. Title + Tagline
 
-**QuotaDrift** is a self-hosted AI orchestration layer that provides automatic failover across 8 free-tier LLM providers. Built for developers who need high-reliability LLM access with zero downtime.
+**QuotaDrift: AI reliability with enforceable contracts, not best-effort routing.**
 
-> 🎯 **Never worry about AI quota limits again** - QuotaDrift automatically switches between providers when one hits rate limits or fails.
+## 2. The Problem
 
-## ✨ Key Features
+AI features fail in production for predictable reasons:
 
-- 🔄 **Automatic Failover** - Seamlessly switches between 8 free-tier providers
-- 🧠 **Persistent Memory** - SQLite + ChromaDB for conversation history and RAG
-- 🔍 **Hybrid RAG** - BM25 + Vector search for intelligent context retrieval  
-- 📁 **Code Indexing** - Index and search your codebase for AI-assisted development
-- 🤖 **Self-Healing Agent Loop** - AI writes code → runs it → fixes errors automatically
-- 🔌 **MCP Server** - Model Context Protocol integration for Claude Desktop, Cursor, etc.
-- 🐳 **Docker Ready** - Containerized deployment with one command
-- 📊 **Observability** - Prometheus metrics, structured logging, health checks
+- provider outages
+- quota exhaustion
+- latency spikes
+- unpredictable cost drift
 
-## 🏗️ Architecture
+Most systems route and hope. When contracts are missed, users see failures and teams lose trust.
 
+## 3. The Solution
+
+QuotaDrift takes a request-level contract and enforces it at runtime.
+
+For each request, it decides whether to:
+
+- run a single provider
+- hedge across providers
+- degrade deliberately
+- reject immediately when the contract is impossible
+
+Every decision returns a trace explaining what was chosen and why alternatives were rejected.
+
+## 4. Why This Is Different
+
+This is not a wrapper over multiple models.
+
+QuotaDrift is a policy-enforced control layer:
+
+- hard constraints first
+- adaptive strategy second
+- explainability by default
+
+If the contract cannot be met, it says so explicitly. No silent violations.
+
+## 5. Core Concept
+
+Each request carries a contract:
+
+- `max_latency_ms`
+- `min_reliability`
+- `max_cost_usd`
+- `allow_degrade`
+
+The engine scores providers with confidence-adjusted reliability, predicts risk, and chooses the safest valid path.
+
+## 6. How It Works
+
+1. Receive request + contract
+2. Fast-reject impossible constraints
+3. Score available providers with confidence penalty
+4. Choose strategy: `single`, `hedged`, or `reject`
+5. Execute with timeout and fallback guards
+6. Persist outcome and update provider stats
+7. Return response with full decision trace
+
+## 7. Key Capabilities
+
+- **Contract Enforcement**: latency and cost limits are checked on every response.
+- **Adaptive Routing**: strategy shifts between single and hedged based on risk.
+- **Explainable Decisions**: trace includes selected and rejected providers with reasons.
+- **Controlled Degradation**: degrade with explicit `degrade_reason`, never implicit failure.
+- **Outcome Ledger**: every request is recorded for reliability and cost accountability.
+
+## 8. Example Request + Response
+
+### Request
+
+```http
+POST /api/chat
+Content-Type: application/json
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    FastAPI Application                │
-├─────────────────────────────────────────────────────────────┤
-│  Circuit Breaker │  Model Manager  │  Metrics     │
-│  - Failure Track │  - Dynamic Score │  - Prometheus │
-│  - Auto Recovery │  - Load Balance │  - Request ID  │
-│  - Health Checks │  - Circuit State │  - JSON Logs  │
-└─────────────────────────────────────────────────────────────┘
-                           │
-                    ┌─────────────┴─────────────┐
-                    │    LiteLLM Router        │
-                    │  - Fallback Chain        │
-                    │  - Rate Limiting        │
-                    │  - Provider Health      │
-                    └─────────────┬─────────────┘
-                                  │
-                    ┌─────────────┴─────────────┐
-                    │     AI Providers            │
-                    │  Groq, GitHub, Mistral     │
-                    │  Silicon Flow, Hugging Face │
-                    │  Cloudflare, OpenRouter    │
-                    └──────────────────────────────┘
+
+```json
+{
+    "session_id": 42,
+    "message": "Generate a release summary for this sprint",
+    "contract": {
+        "max_latency_ms": 1800,
+        "min_reliability": 0.95,
+        "max_cost_usd": 0.01,
+        "allow_degrade": true
+    }
+}
 ```
 
-## 🌐 Provider Priority Chain
+### Response
 
-| Priority | Provider | Model | Free Tier | Rate Limit |
-|----------|----------|-------|------------|------------|
-| 1 | **Groq** | Llama 3.3 70B | Unlimited | 30 req/min |
-| 2 | **GitHub Models** | GPT-4o mini | Unlimited | 4,000 req/hr |
-| 3 | **GitHub Models** | Llama 3.3 70B | Unlimited | 4,000 req/hr |
-| 4 | **Mistral AI** | Mistral Small | 1B tokens/month | 1 req/sec |
-| 5 | **Silicon Flow** | Qwen2.5-7B | 20M tokens | 100 req/min |
-| 6 | **Hugging Face** | Mistral-7B | Free inference | 30 req/min |
-| 7 | **Cloudflare AI** | Llama 3.3 70B | 10k requests/day | 1 req/sec |
-| 8 | **OpenRouter** | Mistral 7B | Free models | 200 req/day |
+```json
+{
+    "success": true,
+    "status": "fulfilled",
+    "content": "Here is your sprint release summary...",
+    "latency_ms": 1214,
+    "contract": {
+        "max_latency_ms": 1800,
+        "min_reliability": 0.95,
+        "max_cost_usd": 0.01,
+        "allow_degrade": true
+    },
+    "trace": {
+        "request_id": "5a1c7f3d-1d66-4a8e-ae37-4f8f8d6bc5ef",
+        "strategy": "hedged",
+        "selected_providers": ["primary", "secondary"],
+        "rejected_providers": [
+            {
+                "provider": "fallback",
+                "reason": "cost too high"
+            }
+        ],
+        "reason": "Single route insufficient; hedged route fulfills contract",
+        "risk_level": "medium",
+        "degrade_reason": null,
+        "contract_met": true,
+        "fallback_triggered": false,
+        "attempts": [
+            {
+                "provider": "primary",
+                "success": true,
+                "latency_ms": 1188,
+                "error": null,
+                "error_code": null
+            }
+        ]
+    },
+    "error": null,
+    "error_code": null
+}
+```
 
-## 🚀 Quick Start
+## 9. What Makes It Powerful
 
-### Prerequisites
-- Python 3.11+
-- Docker (optional, for enhanced features)
-- API keys for AI providers
+- Protects user-facing AI flows from provider volatility
+- Prevents cost surprises with request-level ceilings
+- Turns reliability decisions into auditable artifacts
+- Gives teams deterministic behavior under failure, not guesswork
 
-### Installation
+## 10. Quick Start
 
 ```bash
-# Clone the repository
 git clone https://github.com/tazwaryayyyy/quotadrift.git
 cd quotadrift
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# macOS/Linux
+# source .venv/bin/activate
 
-# Install dependencies
 pip install -r requirements.txt
 
-# Configure environment
+# configure your provider keys
 cp .env.example .env
-# Edit .env with your API keys
 
-# Run the application
 python main.py
 ```
 
-Visit **http://localhost:8000** to start using QuotaDrift!
+Open: `http://localhost:8000`
 
-### Environment Variables
+## 11. Tech Stack
 
-```bash
-# Primary - Fastest
-GROQ_API_KEY=gsk_your_key_here
+- FastAPI (API runtime)
+- LiteLLM (provider execution)
+- SQLite (outcome and session persistence)
+- Prometheus metrics (operational visibility)
 
-# GitHub Models (no scopes needed)
-GITHUB_TOKEN=ghp_your_token_here
+## 12. Closing Line
 
-# Mistral AI (1B tokens/month)
-MISTRAL_API_KEY=your_key_here
-
-# Silicon Flow (20M tokens free)
-SILICONFLOW_API_KEY=your_key_here
-
-# Hugging Face (free inference)
-HUGGINGFACE_API_KEY=hf_your_token_here
-
-# Cloudflare Workers AI (10k requests/day)
-CLOUDFLARE_API_KEY=your_token_here
-CLOUDFLARE_ACCOUNT_ID=your_account_id_here
-
-# OpenRouter (fallback)
-OPENROUTER_API_KEY=sk-or-your_key_here
-```
-
-## 🎨 Modern Web Interface
-
-QuotaDrift features a clean, professional web interface built with modern design principles:
-
-### **Design Features**
-- 🎯 **Human-Centered Design** - Clean, readable interface without AI-generated aesthetics
-- 🌙 **Dark Theme** - Professional dark mode with subtle color palette
-- 📱 **Responsive Layout** - Works seamlessly on desktop, tablet, and mobile
-- 🔧 **Resizable Panels** - Customizable sidebar and model panel widths
-- ⚡ **Real-time Updates** - Live model status and streaming responses
-
-### **Interface Components**
-- **Three-Column Layout** - Sidebar (sessions) | Main chat | Model panel
-- **Session Management** - Create, load, and switch between conversation sessions
-- **Model Pool Dashboard** - Real-time provider health, latency, and usage metrics
-- **Code Runner** - Execute code in multiple languages directly in the interface
-- **File Indexing** - Drag-and-drop codebase indexing for enhanced RAG
-- **Semantic Cache** - View and manage conversation cache statistics
-
-### **User Experience**
-- **Markdown Rendering** - Rich text formatting with syntax highlighting
-- **Copy Buttons** - One-click code snippet copying
-- **Context Display** - Expandable RAG context snippets
-- **Toast Notifications** - Non-intrusive feedback messages
-- **Keyboard Shortcuts** - Enter to send, Shift+Enter for newlines
-
-### **Mobile Support**
-- **Collapsible Panels** - Slide-out sidebar and model panel on mobile
-- **Touch-Friendly** - Optimized buttons and interactions
-- **Adaptive Layout** - Responsive design for all screen sizes
-
-Visit **http://localhost:8000** to experience the modern interface!
-
-## 🐳 Docker Deployment
-
-```bash
-# Build and run
-docker build -t quotadrift .
-docker run -p 8000:8000 --env-file .env quotadrift
-
-# Or with docker-compose
-docker-compose up -d
-```
-
-## ☁️ Cloud Deployment
-
-### Railway
-```bash
-# Install Railway CLI
-npm install -g @railway/cli
-
-# Deploy
-railway login
-railway deploy
-```
-
-### Render
-1. Connect your GitHub repository to Render
-2. Create a new Web Service
-3. Set environment variables
-4. Deploy!
-
-## 📡 API Overview
-
-### Core Endpoints
-- `POST /api/chat/stream` - Streaming chat with SSE
-- `GET /api/model-status` - Provider health and metrics
-- `POST /api/session/new` - Create new session
-- `GET /api/sessions` - List all sessions
-- `POST /api/session/share` - Create shareable link
-
-### Enhanced Features
-- `POST /api/run-code` - Execute code in Docker sandbox
-- `POST /api/chat/edit` - Edit and regenerate messages
-- `GET /api/provider-test` - Test provider connectivity
-- `GET /metrics` - Prometheus metrics
-
-### Example Usage
-
-```python
-import requests
-
-# Streaming chat
-response = requests.post(
-    "http://localhost:8000/api/chat/stream",
-    json={
-        "session_id": 1,
-        "message": "Hello, how are you?"
-    },
-    stream=True
-)
-
-for line in response.iter_lines():
-    if line:
-        print(line.decode('utf-8'))
-```
-
-## 🛠️ Tech Stack
-
-- **Backend**: FastAPI, LiteLLM, SQLite, ChromaDB
-- **Frontend**: Vanilla HTML5/CSS3, JavaScript
-- **AI**: 8 free-tier providers via LiteLLM
-- **Containerization**: Docker, Docker Compose
-- **Monitoring**: Prometheus, structured logging
-- **Testing**: pytest, ruff, black
-
-## 🧪 Development
-
-### Setup Development Environment
-
-```bash
-# Install development dependencies
-pip install -r requirements.txt
-
-# Run tests
-pytest tests/ -v
-
-# Lint and format
-ruff check .
-ruff format .
-black .
-
-# Type checking
-mypy .
-```
-
-### Project Structure
-
-```
-QuotaDrift/
-├── main.py                 # FastAPI application
-├── router.py              # LiteLLM router integration
-├── model_manager.py       # Circuit breaker & scoring
-├── config.py              # Provider configuration
-├── memory.py              # Session & RAG storage
-├── cache.py               # Semantic caching
-├── compiler.py            # State compilation
-├── enhanced_agent_runner.py # Docker code execution
-├── static/                 # Frontend assets
-├── tests/                  # Test suite
-├── .github/workflows/     # CI/CD pipeline
-├── requirements.txt       # Dependencies
-├── pyproject.toml         # Project configuration
-└── README.md              # This file
-```
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
-
-### Quick Start for Contributors
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Make your changes
-4. Run tests and linting: `pytest tests/ && ruff check . && black .`
-5. Commit your changes: `git commit -m 'Add amazing feature'`
-6. Push to the branch: `git push origin feature/amazing-feature`
-7. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## � Maintainer
-
-- **Tazwar Yayyyy** – creator and lead maintainer  
-  [GitHub](https://github.com/tazwaryayyyy)
-
-## �🙏 Acknowledgments
-
-- [LiteLLM](https://github.com/BerriAI/litellm) - AI model routing
-- [ChromaDB](https://github.com/chroma-core/chroma) - Vector database
-- [FastAPI](https://fastapi.tiangolo.com/) - Web framework
-- [Prometheus](https://prometheus.io/) - Monitoring
-- [Docker](https://www.docker.com/) - Containerization
-
-## 📞 Support
-
-- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/tazwaryayyyy/quotadrift/issues)
-- 💡 **Feature Requests**: [GitHub Discussions](https://github.com/tazwaryayyyy/quotadrift/discussions)
-- 📖 **Documentation**: [Wiki](https://github.com/tazwaryayyyy/quotadrift/wiki)
-
----
-
-**QuotaDrift** - Never worry about AI quota limits again. 🚀
-
-*Built with ❤️ by Tazwar Yayyyy and the QuotaDrift community*
+QuotaDrift makes AI requests behave like production contracts, not optimistic API calls.

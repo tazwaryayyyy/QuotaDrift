@@ -45,10 +45,12 @@ from pydantic import BaseModel
 import cache
 import compiler
 import config
+import contract_engine
 import enhanced_agent_runner
 import memory
 import model_manager
 import router as ai_router
+from contract_models import OutcomeRecord, RequestContract
 
 load_dotenv()
 
@@ -194,7 +196,7 @@ async def verify_providers():
             missing_vars.append(f"{provider} ({env_var})")
 
     if missing_vars:
-        logger.warning(f"Missing API keys for: {', '.join(missing_vars)}")
+        logger.warning("Missing API keys for: %s", ", ".join(missing_vars))
         logger.warning("These providers will be skipped during failover.")
     else:
         logger.info("✅ All provider API keys configured")
@@ -208,25 +210,26 @@ async def test_provider_connectivity():
 
     # Only test if we have at least one provider key
     if not os.getenv("GROQ_API_KEY"):
-        logger.warning("Skipping connectivity tests - no primary provider key found")
+        logger.warning(
+            "Skipping connectivity tests - no primary provider key found")
         return
 
-    test_providers = []
+    provider_names = []
 
     if os.getenv("GROQ_API_KEY"):
-        test_providers.append("Groq")
+        provider_names.append("Groq")
     if os.getenv("MISTRAL_API_KEY"):
-        test_providers.append("Mistral AI")
+        provider_names.append("Mistral AI")
     if os.getenv("SILICONFLOW_API_KEY"):
-        test_providers.append("Silicon Flow")
+        provider_names.append("Silicon Flow")
     if os.getenv("HUGGINGFACE_API_KEY"):
-        test_providers.append("Hugging Face")
+        provider_names.append("Hugging Face")
     if os.getenv("CLOUDFLARE_API_KEY") and os.getenv("CLOUDFLARE_ACCOUNT_ID"):
-        test_providers.append("Cloudflare Workers AI")
+        provider_names.append("Cloudflare Workers AI")
     if os.getenv("OPENROUTER_API_KEY"):
-        test_providers.append("OpenRouter")
+        provider_names.append("OpenRouter")
 
-    logger.info(f"Testing connectivity for: {', '.join(test_providers)}")
+    logger.info("Testing connectivity for: %s", ", ".join(provider_names))
 
     # Note: We don't actually test connectivity here to avoid using tokens on startup
     # But we log which providers are configured for testing
@@ -262,7 +265,7 @@ async def run_code(request: RunCodeRequest):
             "error": result.error,
         }
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         return {
             "success": False,
             "error": f"Execution failed: {str(e)}",
@@ -311,6 +314,11 @@ class ChatRequest(BaseModel):
     prune_n: int | None = 0  # for editing/regenerating messages
 
 
+class ContractChatRequest(ChatRequest):
+    contract: RequestContract | None = None
+    timeout_s: float | None = 30
+
+
 class SwitchContextRequest(BaseModel):
     session_id: int
 
@@ -349,7 +357,8 @@ async def new_session(body: NewSessionRequest):
     project_id = memory.upsert_project(
         body.project_name, body.project_description or ""
     )
-    session_id = memory.create_session(project_id, body.session_title or "New session")
+    session_id = memory.create_session(
+        project_id, body.session_title or "New session")
     return {
         "project_id": project_id,
         "session_id": session_id,
@@ -375,6 +384,221 @@ async def get_history(session_id: int):
 # ---------------------------------------------------------------------------
 # Main chat — SSE streaming
 # ---------------------------------------------------------------------------
+@app.post("/api/chat")
+async def chat_contract(body: ContractChatRequest):
+    """Contract-driven non-streaming chat with single/hedged/reject decisions."""
+    started = time.monotonic()
+    request_id = str(uuid.uuid4())
+    contract = body.contract or RequestContract()
+
+    history = memory.get_messages_for_llm(body.session_id)
+    llm_messages = history + [{"role": "user", "content": body.message}]
+    system = body.project_context
+
+    # Save user message immediately for session continuity.
+    memory.save_message(body.session_id, "user", body.message)
+    if len(history) == 0:
+        title = body.message[:50] + ("…" if len(body.message) > 50 else "")
+        memory.update_session_title(body.session_id, title)
+
+    providers_state = model_manager.model_manager.get_health_snapshot()
+    decision = contract_engine.decide_strategy(contract, providers_state)
+    selected_providers = list(decision.selected_providers)
+    fallback_providers = list(decision.fallback_providers)
+
+    if decision.strategy == "reject":
+        outcome = OutcomeRecord(
+            request_id=request_id,
+            session_id=body.session_id,
+            strategy="reject",
+            selected_providers=selected_providers,
+            winner_provider=None,
+            success=False,
+            latency_ms=int((time.monotonic() - started) * 1000),
+            tokens=0,
+            cost_usd=0.0,
+            contract_met=False,
+            fallback_triggered=False,
+            error=decision.reason,
+        )
+        memory.save_provider_outcome(outcome.model_dump(mode="json"))
+
+        trace = {
+            "request_id": request_id,
+            "strategy": "reject",
+            "selected_providers": selected_providers,
+            "rejected_providers": decision.rejected_providers,
+            "reason": decision.reason,
+            "risk_level": decision.risk_level,
+            "degrade_reason": decision.degrade_reason,
+            "contract_met": False,
+            "fallback_triggered": False,
+            "attempts": [],
+        }
+        return {
+            "success": False,
+            "status": "rejected",
+            "error": "contract_rejected",
+            "error_code": "contract_rejected",
+            "contract": contract.model_dump(),
+            "trace": trace,
+        }
+
+    attempts: list[dict] = []
+    fallback_triggered = False
+
+    if decision.strategy == "hedged":
+        result = await contract_engine.execute_hedged(
+            llm_messages,
+            system,
+            selected_providers,
+            timeout_s=body.timeout_s or 30,
+        )
+        attempts.append(
+            {
+                "provider": result["provider_slot"],
+                "success": result["success"],
+                "latency_ms": result["latency_ms"],
+                "error": result["error"],
+                "error_code": result.get("error_code"),
+            }
+        )
+        if not result["success"] and result.get("provider_errors"):
+            attempts.extend(
+                {
+                    "provider": p.get("provider", "unknown"),
+                    "success": False,
+                    "latency_ms": result["latency_ms"],
+                    "error": p.get("error", "unknown_error"),
+                    "error_code": result.get("error_code"),
+                }
+                for p in result.get("provider_errors", [])
+            )
+    else:
+        result = await contract_engine.execute_single(
+            llm_messages,
+            system,
+            selected_providers[0],
+            timeout_s=body.timeout_s or 30,
+        )
+        attempts.append(
+            {
+                "provider": result["provider_slot"],
+                "success": result["success"],
+                "latency_ms": result["latency_ms"],
+                "error": result["error"],
+                "error_code": result.get("error_code"),
+            }
+        )
+
+        if not result["success"] and fallback_providers:
+            for fallback_provider in fallback_providers:
+                fallback_triggered = True
+                fallback_result = await contract_engine.execute_single(
+                    llm_messages,
+                    system,
+                    fallback_provider,
+                    timeout_s=body.timeout_s or 30,
+                )
+                attempts.append(
+                    {
+                        "provider": fallback_result["provider_slot"],
+                        "success": fallback_result["success"],
+                        "latency_ms": fallback_result["latency_ms"],
+                        "error": fallback_result["error"],
+                        "error_code": fallback_result.get("error_code"),
+                    }
+                )
+                result = fallback_result
+                if fallback_result["success"]:
+                    break
+
+    total_latency_ms = int((time.monotonic() - started) * 1000)
+    winner_provider = result["provider_slot"] if result["success"] else None
+    priced_provider = winner_provider or (
+        selected_providers[0] if selected_providers else "unknown")
+    final_cost = contract_engine.estimate_cost_usd(
+        priced_provider, result["tokens"])
+
+    contract_met = bool(
+        result["success"]
+        and total_latency_ms <= contract.max_latency_ms
+        and final_cost <= contract.max_cost_usd
+    )
+
+    if contract_met:
+        status = "fulfilled"
+    elif contract.allow_degrade:
+        status = "degraded"
+    else:
+        status = "rejected"
+
+    response_success = bool(result["success"] and status != "rejected")
+
+    if response_success and result["content"]:
+        memory.save_message(
+            body.session_id,
+            "assistant",
+            result["content"],
+            model=result["model_used"],
+            tokens=result["tokens"],
+        )
+        memory.update_session_model(body.session_id, result["model_used"])
+        cache.get_cache().set(
+            body.message, result["content"], result["model_used"])
+
+    outcome = OutcomeRecord(
+        request_id=request_id,
+        session_id=body.session_id,
+        strategy=decision.strategy,
+        selected_providers=selected_providers,
+        winner_provider=winner_provider,
+        success=response_success,
+        latency_ms=total_latency_ms,
+        tokens=result["tokens"],
+        cost_usd=final_cost,
+        contract_met=contract_met,
+        fallback_triggered=fallback_triggered or result.get(
+            "fallback_triggered", False),
+        error=result["error"],
+    )
+    memory.save_provider_outcome(outcome.model_dump(mode="json"))
+
+    if winner_provider:
+        model_manager.model_manager.record_contract_outcome(
+            winner_provider,
+            success=result["success"],
+            latency_ms=total_latency_ms,
+            cost_usd=final_cost,
+        )
+
+    trace = {
+        "request_id": request_id,
+        "strategy": decision.strategy,
+        "selected_providers": selected_providers,
+        "rejected_providers": decision.rejected_providers,
+        "reason": decision.reason,
+        "risk_level": decision.risk_level,
+        "degrade_reason": decision.degrade_reason,
+        "contract_met": contract_met,
+        "fallback_triggered": outcome.fallback_triggered,
+        "attempts": attempts,
+    }
+
+    return {
+        "success": response_success,
+        "status": status,
+        "content": result["content"] if response_success else "",
+        "model_used": result["model_used"],
+        "tokens": result["tokens"],
+        "latency_ms": total_latency_ms,
+        "contract": contract.model_dump(),
+        "trace": trace,
+        "error": result["error"],
+        "error_code": result.get("error_code", "contract_rejected" if status == "rejected" else None),
+    }
+
+
 @app.post("/api/chat/stream")
 async def chat_stream(body: ChatRequest):
     """
@@ -418,7 +642,8 @@ async def chat_stream(body: ChatRequest):
             # Use GitHub Models (secondary) for fast query rewriting if files exist
             search_query = await memory.rewrite_query(body.message, ai_router.chat)
 
-        relevant_session = memory.semantic_search(body.message, body.session_id, n=2)
+        relevant_session = memory.semantic_search(
+            body.message, body.session_id, n=2)
         relevant_files = memory.hybrid_search_rrf(
             search_query, project_id, body.session_id, n=3
         )
@@ -445,7 +670,8 @@ async def chat_stream(body: ChatRequest):
 
         if relevant_session:
             system_parts.append(
-                "\nRelevant session context:\n" + "\n---\n".join(relevant_session)
+                "\nRelevant session context:\n" +
+                "\n---\n".join(relevant_session)
             )
         if relevant_files:
             system_parts.append(
@@ -535,7 +761,8 @@ async def edit_message(request: EditMessageRequest):
         messages = memory.get_messages_for_llm(request.session_id)
 
         if request.message_index >= len(messages):
-            raise HTTPException(status_code=404, detail="Message index out of range")
+            raise HTTPException(
+                status_code=404, detail="Message index out of range")
 
         # Edit the message
         messages[request.message_index]["content"] = request.new_content
@@ -551,7 +778,9 @@ async def edit_message(request: EditMessageRequest):
             memory.update_session_system(request.session_id, request.system)
 
         logger.info(
-            f"Edited message {request.message_index} in session {request.session_id}"
+            "Edited message %s in session %s",
+            request.message_index,
+            request.session_id,
         )
         MESSAGES_PROCESSED.inc()
 
@@ -562,8 +791,8 @@ async def edit_message(request: EditMessageRequest):
             "message_index": request.message_index,
         }
 
-    except Exception as e:
-        logger.error(f"Error editing message: {e}")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Error editing message: %s", e)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
@@ -575,7 +804,8 @@ async def regenerate_message(request: EditMessageRequest):
         all_messages = memory.get_messages_for_llm(request.session_id)
 
         if request.message_index >= len(all_messages):
-            raise HTTPException(status_code=404, detail="Message index out of range")
+            raise HTTPException(
+                status_code=404, detail="Message index out of range")
 
         # Keep messages before the target
         messages_to_regenerate = all_messages[: request.message_index]
@@ -597,7 +827,9 @@ async def regenerate_message(request: EditMessageRequest):
         memory.update_session_messages(request.session_id, updated_messages)
 
         logger.info(
-            f"Regenerated message {request.message_index} in session {request.session_id}"
+            "Regenerated message %s in session %s",
+            request.message_index,
+            request.session_id,
         )
         MESSAGES_PROCESSED.inc()
         PROVIDER_REQUESTS.labels(
@@ -613,8 +845,8 @@ async def regenerate_message(request: EditMessageRequest):
             "message_index": request.message_index,
         }
 
-    except Exception as e:
-        logger.error(f"Error regenerating message: {e}")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Error regenerating message: %s", e)
         PROVIDER_ERRORS.labels(
             provider="unknown", error_type="regeneration_failed"
         ).inc()
@@ -653,7 +885,8 @@ async def create_share_link(request: ShareRequest):
 async def get_shared_session(token: str):
     """Get a shared session by token."""
     if token not in share_tokens:
-        raise HTTPException(status_code=404, detail="Share link not found or expired")
+        raise HTTPException(
+            status_code=404, detail="Share link not found or expired")
 
     share_data = share_tokens[token]
     expires_at = datetime.fromisoformat(share_data["expires_at"])
@@ -669,19 +902,32 @@ async def get_shared_session(token: str):
     session_id = share_data["session_id"]
 
     try:
-        session = memory.get_session(session_id)
         messages = memory.get_messages(session_id)
-        project = memory.get_project(session["project_id"]) if session else None
+        sessions = memory.list_sessions()
+        session = next((s for s in sessions if s["id"] == session_id), None)
+        projects = memory.list_projects()
+        project = None
+        if session:
+            project = next(
+                (p for p in projects if p["name"] == session["project_name"]),
+                None,
+            )
+
+        project_name = "Unknown"
+        project_description = ""
+        if isinstance(project, dict):
+            project_name = str(project.get("name", "Unknown"))
+            project_description = str(project.get("description", ""))
 
         return {
             "session": {
                 "id": session_id,
                 "title": session["title"] if session else "Untitled",
                 "created_at": session["created_at"] if session else None,
-                "model": session["model"] if session else None,
+                "model": session["last_model"] if session else None,
                 "project": {
-                    "name": project["name"] if project else "Unknown",
-                    "description": project["description"] if project else "",
+                    "name": project_name,
+                    "description": project_description,
                 },
             },
             "messages": messages,
@@ -692,7 +938,8 @@ async def get_shared_session(token: str):
             },
         }
     except Exception:
-        raise HTTPException(status_code=404, detail="Session not found") from None
+        raise HTTPException(
+            status_code=404, detail="Session not found") from None
 
 
 @app.get("/shared/{token}")
@@ -724,7 +971,7 @@ async def test_providers():
                 "model_used": response.get("model_used", "unknown"),
                 "response": response.get("content", "no content")[:50],
             }
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             results["groq"] = {"status": "error", "error": str(e)}
     else:
         results["groq"] = {"status": "no_key"}
@@ -754,7 +1001,7 @@ async def test_providers():
 
             # Restore original config
             config.MODEL_LIST[0] = original_primary
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             results["mistral"] = {"status": "error", "error": str(e)}
             # Restore original config
             config.MODEL_LIST[0] = original_primary
@@ -805,36 +1052,45 @@ async def test_providers():
 
 # Request metrics
 REQUEST_COUNT = Counter(
-    "quotadrift_requests_total", "Total requests", ["method", "endpoint", "status"]
+    "quotadrift_requests_total", "Total requests", [
+        "method", "endpoint", "status"]
 )
 REQUEST_DURATION = Histogram(
-    "quotadrift_request_duration_seconds", "Request duration", ["method", "endpoint"]
+    "quotadrift_request_duration_seconds", "Request duration", [
+        "method", "endpoint"]
 )
-ACTIVE_REQUESTS = Gauge("quotadrift_active_requests", "Currently active requests")
+ACTIVE_REQUESTS = Gauge("quotadrift_active_requests",
+                        "Currently active requests")
 
 # Provider metrics
 PROVIDER_REQUESTS = Counter(
-    "quotadrift_provider_requests_total", "Provider requests", ["provider", "status"]
+    "quotadrift_provider_requests_total", "Provider requests", [
+        "provider", "status"]
 )
 PROVIDER_LATENCY = Histogram(
-    "quotadrift_provider_latency_seconds", "Provider response time", ["provider"]
+    "quotadrift_provider_latency_seconds", "Provider response time", [
+        "provider"]
 )
 PROVIDER_TOKENS = Counter(
     "quotadrift_provider_tokens_total", "Tokens used by provider", ["provider"]
 )
 PROVIDER_ERRORS = Counter(
-    "quotadrift_provider_errors_total", "Provider errors", ["provider", "error_type"]
+    "quotadrift_provider_errors_total", "Provider errors", [
+        "provider", "error_type"]
 )
 
 # System metrics
 SYSTEM_CPU_USAGE = Gauge("quotadrift_system_cpu_percent", "System CPU usage")
-SYSTEM_MEMORY_USAGE = Gauge("quotadrift_system_memory_percent", "System memory usage")
-SYSTEM_DISK_USAGE = Gauge("quotadrift_system_disk_percent", "System disk usage")
+SYSTEM_MEMORY_USAGE = Gauge(
+    "quotadrift_system_memory_percent", "System memory usage")
+SYSTEM_DISK_USAGE = Gauge(
+    "quotadrift_system_disk_percent", "System disk usage")
 
 # Application metrics
 CACHE_HITS = Counter("quotadrift_cache_hits_total", "Cache hits")
 CACHE_MISSES = Counter("quotadrift_cache_misses_total", "Cache misses")
-SESSIONS_CREATED = Counter("quotadrift_sessions_created_total", "Sessions created")
+SESSIONS_CREATED = Counter(
+    "quotadrift_sessions_created_total", "Sessions created")
 MESSAGES_PROCESSED = Counter(
     "quotadrift_messages_processed_total", "Messages processed"
 )
@@ -899,7 +1155,7 @@ async def readiness_check():
     """Readiness check - verifies dependencies."""
     try:
         # Check database
-        memory.get_projects()
+        memory.list_projects()
 
         # Check models
         available = model_manager.model_manager.get_available_models()
@@ -910,7 +1166,7 @@ async def readiness_check():
             "available_models": len(available),
             "total_models": len(config.MODEL_LIST),
         }
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         return Response({"status": "not_ready", "error": str(e)}, status_code=503)
 
 
@@ -977,7 +1233,8 @@ def calculate_quota_forecast(model: dict) -> dict:
         remaining = max(
             0, limit_info["daily"] - projected_monthly
         )  # daily contains monthly limit
-        usage_percent = min(100, (projected_monthly / limit_info["daily"]) * 100)
+        usage_percent = min(
+            100, (projected_monthly / limit_info["daily"]) * 100)
     else:
         remaining = limit_info["daily"]
         usage_percent = 0
@@ -1028,8 +1285,10 @@ def get_quota_limits() -> dict:
         "groq": {"daily": 14400, "period": "day"},  # 30 req/min * 8 hrs
         "github": {"daily": 4000, "period": "day"},  # 4,000 req/hr * 1 hr
         "mistral": {"daily": 1000000000, "period": "month"},  # 1B tokens/month
-        "siliconflow": {"daily": 20000000, "period": "month"},  # 20M tokens/month
-        "huggingface": {"daily": 10000, "period": "day"},  # ~10k requests/month
+        # 20M tokens/month
+        "siliconflow": {"daily": 20000000, "period": "month"},
+        # ~10k requests/month
+        "huggingface": {"daily": 10000, "period": "day"},
         "cloudflare": {"daily": 10000, "period": "day"},  # 10k requests/day
         "openrouter": {"daily": 200, "period": "day"},  # Free tier
     }
@@ -1111,7 +1370,7 @@ ERROR:
 
                 current_code = new_code
                 yield f"data: {json.dumps({'type': 'fix', 'content': 'AI suggested a fix. Retrying...'})}\n\n"
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 yield f"data: {json.dumps({'type': 'error', 'content': f'AI fix failed: {str(e)}'})}\n\n"
                 break
 
@@ -1204,7 +1463,7 @@ async def api_health_check():
                 f"Some providers failing: {', '.join(failing_providers)}"
             )
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         health_status["status"] = "unhealthy"
         health_status["message"] = f"Provider health check failed: {str(e)}"
 
@@ -1212,7 +1471,7 @@ async def api_health_check():
     try:
         memory.list_sessions()
         health_status["database"] = "connected"
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         health_status["database"] = "disconnected"
         health_status["status"] = "unhealthy"
         health_status["message"] = f"Database connection failed: {str(e)}"
@@ -1301,7 +1560,7 @@ async def index_files(
             content = (await f.read()).decode("utf-8", errors="replace")
             memory.index_file(project_id, f.filename, content)
             indexed.append(f.filename)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             skipped.append(f.filename)
 
     return {
