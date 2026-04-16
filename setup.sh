@@ -20,5 +20,5 @@ fi
 echo "------------------------------------------------"
 echo "✅ Setup complete."
 echo "1. Edit .env with your API keys."
-echo "2. Run the server: uvicorn main:app --reload"
+echo "2. Run the server: uvicorn quotadrift.main:app --reload"
 echo "------------------------------------------------"

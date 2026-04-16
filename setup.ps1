@@ -19,5 +19,5 @@ if (-not (Test-Path .env)) {
 Write-Host "------------------------------------------------" -ForegroundColor White
 Write-Host "✅ Setup complete." -ForegroundColor Green
 Write-Host "1. Edit .env with your API keys."
-Write-Host "2. Run the server: uvicorn main:app --reload"
+Write-Host "2. Run the server: uvicorn quotadrift.main:app --reload"
 Write-Host "------------------------------------------------"

@@ -17,7 +17,7 @@ from sentence_transformers import SentenceTransformer
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = BASE_DIR / "switchboard.db"
 CHROMA_DIR = BASE_DIR / "chroma_store"
 

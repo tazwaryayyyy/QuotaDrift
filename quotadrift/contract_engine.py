@@ -2,9 +2,9 @@ import asyncio
 import time
 from typing import Any, cast
 
-import config
-import router as ai_router
-from contract_models import DecisionResult, RequestContract
+from quotadrift import config
+from quotadrift import router as ai_router
+from quotadrift.contract_models import DecisionResult, RequestContract
 
 TOKENS_PER_REQUEST_ESTIMATE = 1200
 

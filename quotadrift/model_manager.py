@@ -18,11 +18,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from functools import lru_cache
 
-import config
+from quotadrift import config
 
 # Import metrics (will be imported after main.py initializes them)
 try:
-    from main import MODEL_LATENCY, MODEL_REQUESTS, TOKEN_USAGE
+    from quotadrift.main import MODEL_LATENCY, MODEL_REQUESTS, TOKEN_USAGE
 except ImportError:
     # Fallback dummy metrics for testing
     class DummyMetric:

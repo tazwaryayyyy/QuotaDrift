@@ -42,15 +42,19 @@ from prometheus_client import (
 )
 from pydantic import BaseModel
 
-import cache
-import compiler
-import config
-import contract_engine
-import enhanced_agent_runner
-import memory
-import model_manager
-import router as ai_router
-from contract_models import OutcomeRecord, RequestContract
+from quotadrift import (
+    cache,
+    compiler,
+    config,
+    contract_engine,
+    enhanced_agent_runner,
+    memory,
+    model_manager,
+)
+from quotadrift import (
+    router as ai_router,
+)
+from quotadrift.contract_models import OutcomeRecord, RequestContract
 
 load_dotenv()
 
@@ -128,8 +132,9 @@ app.add_middleware(
 )
 
 # Define STATIC_DIR
-STATIC_DIR = Path(__file__).parent / "static"
-app.mount("/static", StaticFiles(directory="static"), name="static")
+ROOT_DIR = Path(__file__).resolve().parent.parent
+STATIC_DIR = ROOT_DIR / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 # ---------------------------------------------------------------------------
@@ -947,7 +952,7 @@ async def serve_shared_page(token: str):
     """Serve a read-only page for shared sessions."""
     try:
         await get_shared_session(token)
-        return FileResponse("static/shared.html", media_type="text/html")
+        return FileResponse(str(STATIC_DIR / "shared.html"), media_type="text/html")
     except HTTPException:
         return Response("<h1>Share link not found or expired</h1>", status_code=404)
 

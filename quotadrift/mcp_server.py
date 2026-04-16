@@ -13,7 +13,7 @@ class MCPServer:
     def __init__(self):
         self.clients = {}  # session_id -> queue
 
-    async def sse_handler(self, request: Request):
+    async def sse_handler(self, _request: Request):
         client_id = str(uuid.uuid4())
         queue = asyncio.Queue()
         self.clients[client_id] = queue
@@ -99,11 +99,11 @@ class MCPServer:
                         "id": msg_id,
                         "result": {"content": [{"type": "text", "text": str(result)}]},
                     }
-                except Exception as e:
+                except (TypeError, ValueError, RuntimeError, KeyError) as exc:
                     return {
                         "jsonrpc": "2.0",
                         "id": msg_id,
-                        "error": {"code": -32000, "message": str(e)},
+                        "error": {"code": -32000, "message": str(exc)},
                     }
 
         return {

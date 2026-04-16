@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import uuid
 from dataclasses import dataclass
+from functools import lru_cache
 
 logger = logging.getLogger("agent_runner")
 
@@ -200,15 +201,15 @@ class EnhancedAgentRunner:
 
             return result
 
-        except Exception as e:
-            logger.error(f"Error executing {language} code: {e}")
+        except (OSError, RuntimeError, ValueError, TypeError, subprocess.SubprocessError) as exc:
+            logger.error("Error executing %s code: %s", language, exc)
             return ExecutionResult(
                 stdout="",
                 stderr="",
                 exit_code=1,
                 execution_time=0,
                 language=language,
-                error=str(e),
+                error=str(exc),
             )
         finally:
             # Cleanup
@@ -216,17 +217,18 @@ class EnhancedAgentRunner:
                 import shutil
 
                 shutil.rmtree(work_dir, ignore_errors=True)
-            except Exception:
+            except OSError:
                 pass
 
     async def _prepare_files(
-        self, work_dir: str, code: str, language: str, filename: str | None = None
+        self, work_dir: str, code: str, language: str, _filename: str | None = None
     ):
         """Prepare source files for execution."""
         lang_config = LanguageConfig.LANGUAGES[language]
 
         # Write main source file
-        main_file = os.path.join(work_dir, "main" + lang_config["extensions"][0])
+        main_file = os.path.join(
+            work_dir, "main" + lang_config["extensions"][0])
         with open(main_file, "w", encoding="utf-8") as f:
             f.write(code)
 
@@ -235,7 +237,7 @@ class EnhancedAgentRunner:
             if file_template == "main.py" and language == "python":
                 # Create requirements.txt for Python
                 req_file = os.path.join(work_dir, "requirements.txt")
-                with open(req_file, "w") as f:
+                with open(req_file, "w", encoding="utf-8") as f:
                     f.write("requests\nnumpy\npandas")  # Common packages
             elif file_template == "package.json" and language == "javascript":
                 # Create package.json for Node.js
@@ -245,7 +247,7 @@ class EnhancedAgentRunner:
                     "version": "1.0.0",
                     "dependencies": {},
                 }
-                with open(pkg_file, "w") as f:
+                with open(pkg_file, "w", encoding="utf-8") as f:
                     json.dump(package_json, f, indent=2)
             elif file_template == "Cargo.toml" and language == "rust":
                 # Create Cargo.toml for Rust
@@ -258,7 +260,7 @@ edition = "2021"
 
 [dependencies]
                 """.strip()
-                with open(cargo_file, "w") as f:
+                with open(cargo_file, "w", encoding="utf-8") as f:
                     f.write(cargo_toml)
 
     async def _run_in_docker(self, work_dir: str, language: str) -> ExecutionResult:
@@ -270,7 +272,7 @@ edition = "2021"
 
         # Create Dockerfile
         dockerfile_path = os.path.join(work_dir, "Dockerfile")
-        with open(dockerfile_path, "w") as f:
+        with open(dockerfile_path, "w", encoding="utf-8") as f:
             f.write(lang_config["dockerfile"])
 
         # Build Docker image
@@ -278,7 +280,11 @@ edition = "2021"
 
         try:
             build_result = subprocess.run(
-                build_cmd, capture_output=True, text=True, timeout=30
+                build_cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
             )
             if build_result.returncode != 0:
                 return ExecutionResult(
@@ -322,7 +328,11 @@ edition = "2021"
 
         try:
             result = subprocess.run(
-                run_cmd, capture_output=True, text=True, timeout=self.config.timeout
+                run_cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.config.timeout,
+                check=False,
             )
             execution_time = time.time() - start_time
 
@@ -336,7 +346,11 @@ edition = "2021"
 
         except subprocess.TimeoutExpired:
             # Kill the container
-            subprocess.run(["docker", "kill", container_name], capture_output=True)
+            subprocess.run(
+                ["docker", "kill", container_name],
+                capture_output=True,
+                check=False,
+            )
             return ExecutionResult(
                 stdout="",
                 stderr="",
@@ -351,7 +365,7 @@ edition = "2021"
             subprocess.run(
                 ["docker", "rmi", container_name],
                 capture_output=True,
-                ignore_errors=True,
+                check=False,
             )
 
     def get_supported_languages(self) -> list[str]:
@@ -377,7 +391,7 @@ edition = "2021"
             import shutil
 
             shutil.rmtree(self.temp_dir, ignore_errors=True)
-        except Exception:
+        except OSError:
             pass
 
 
@@ -386,7 +400,7 @@ class SimpleAgentRunner:
     """Simple fallback runner for systems without Docker."""
 
     def __init__(self):
-        import agent_runner  # Import original runner
+        from quotadrift import agent_runner  # Import original runner
 
         self.fallback_runner = agent_runner
 
@@ -436,21 +450,15 @@ class SimpleAgentRunner:
         return "python"
 
 
-# Global runner instance
-_runner_instance = None
-
-
-def get_runner() -> EnhancedAgentRunner:
+@lru_cache(maxsize=1)
+def get_runner() -> EnhancedAgentRunner | SimpleAgentRunner:
     """Get the appropriate runner instance."""
-    global _runner_instance
-    if _runner_instance is None:
-        # Check if Docker is available
-        try:
-            subprocess.run(["docker", "--version"], capture_output=True, check=True)
-            _runner_instance = EnhancedAgentRunner()
-            logger.info("Using Docker-based sandbox runner")
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            _runner_instance = SimpleAgentRunner()
-            logger.warning("Docker not available, using simple runner")
-
-    return _runner_instance
+    # Check if Docker is available
+    try:
+        subprocess.run(["docker", "--version"],
+                       capture_output=True, check=True)
+        logger.info("Using Docker-based sandbox runner")
+        return EnhancedAgentRunner()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        logger.warning("Docker not available, using simple runner")
+        return SimpleAgentRunner()

@@ -7,9 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import config
-import router as ai_router
-from model_manager import model_manager
+from quotadrift import config
+from quotadrift import model_manager as model_manager_module
+from quotadrift import router as ai_router
+from quotadrift.model_manager import model_manager
 
 
 class TestRouterFailover:
@@ -18,7 +19,7 @@ class TestRouterFailover:
     @pytest.fixture
     def mock_router(self):
         """Create a mock router with controlled responses."""
-        with patch("router.get_router") as mock_get_router:
+        with patch("quotadrift.router.get_router") as mock_get_router:
             mock_router_instance = AsyncMock()
             mock_get_router.return_value = mock_router_instance
             yield mock_router_instance
@@ -54,10 +55,11 @@ class TestRouterFailover:
         success_response.usage.total_tokens = 15
 
         # First call fails, second succeeds
-        mock_router.acompletion.side_effect = [rate_limit_error, success_response]
+        mock_router.acompletion.side_effect = [
+            rate_limit_error, success_response]
 
         # Test chat with retry logic
-        with patch("router._try_mark_error") as mock_mark_error:
+        with patch("quotadrift.router._try_mark_error") as mock_mark_error:
             result = await ai_router.chat([{"role": "user", "content": "test"}])
 
             # Should have retried and succeeded
@@ -105,19 +107,17 @@ class TestRouterFailover:
     async def test_circuit_breaker_integration(self):
         """Test circuit breaker integration with router."""
         # Test circuit breaker state changes
-        circuit_breaker = model_manager.model_manager.circuit_breakers["primary"]
+        circuit_breaker = model_manager.circuit_breakers["primary"]
 
         # Simulate failures
         for i in range(5):  # Exceed failure threshold
-            model_manager.model_manager.record_failure(
-                "primary", f"req_{i}", "Test error"
-            )
+            model_manager.record_failure("primary", f"req_{i}", "Test error")
 
         # Should be open now
         assert circuit_breaker.state == "open"
 
         # Try to get best model - should skip failed provider
-        best_model = model_manager.model_manager.get_best_model("test_req")
+        best_model = model_manager.get_best_model("test_req")
         assert best_model != "primary"
 
 
@@ -129,7 +129,7 @@ class TestProviderTestEndpoint:
         """Test provider test endpoint with mocked responses."""
         import os
 
-        from main import test_providers
+        from quotadrift.main import test_providers
 
         # Mock environment variables
         with patch.dict(
@@ -145,7 +145,7 @@ class TestProviderTestEndpoint:
             },
         ):
             # Mock router responses
-            with patch("main.ai_router.chat") as mock_chat:
+            with patch("quotadrift.main.ai_router.chat") as mock_chat:
                 mock_chat.return_value = {
                     "content": "test",
                     "model_used": "groq/llama-3.3-70b-versatile",
@@ -169,17 +169,17 @@ class TestModelManagerIntegration:
     @pytest.mark.asyncio
     async def test_request_tracking(self):
         """Test request tracking through model manager."""
-        request_id = model_manager.model_manager.get_request_id()
+        request_id = model_manager_module.get_request_id()
 
         # Get best model (should be primary if available)
-        model_name = model_manager.model_manager.get_best_model(request_id)
+        model_name = model_manager.get_best_model(request_id)
         assert model_name in config.health
 
         # Record success
-        model_manager.model_manager.record_success(model_name, request_id, tokens=10)
+        model_manager.record_success(model_name, request_id, tokens=10)
 
         # Check metrics updated
-        metrics = model_manager.model_manager.metrics[model_name]
+        metrics = model_manager.metrics[model_name]
         assert len(metrics.recent_successes) > 0
         assert metrics.total_requests > 0
 
@@ -188,26 +188,25 @@ class TestModelManagerIntegration:
         """Test dynamic model scoring based on performance."""
         # Simulate some successful requests
         for _i in range(5):
-            request_id = model_manager.model_manager.get_request_id()
+            request_id = model_manager_module.get_request_id()
             model_name = "primary"
 
             # Record with low latency (good performance)
-            model_manager.model_manager.start_request(request_id, model_name)
+            model_manager.start_request(model_name, request_id)
             await asyncio.sleep(0.01)  # Simulate processing
-            model_manager.model_manager.record_success(model_name, request_id, tokens=5)
+            model_manager.record_success(model_name, request_id, tokens=5)
 
-        # Update metrics
-        model_manager.model_manager._update_metrics("primary")
-
-        # Check score is calculated
-        metrics = model_manager.model_manager.metrics["primary"]
-        assert metrics.score > 0
+        # Check score is calculated through the public snapshot API
+        metrics = model_manager.metrics["primary"]
+        snapshot = model_manager.get_health_snapshot()
+        score_by_id = {item["id"]: item["score"] for item in snapshot}
+        assert score_by_id["primary"] > 0
         assert metrics.avg_latency_ms > 0
 
     @pytest.mark.asyncio
     async def test_health_snapshot(self):
         """Test health snapshot includes all new providers."""
-        snapshot = model_manager.model_manager.get_health_snapshot()
+        snapshot = model_manager.get_health_snapshot()
 
         # Should include all configured providers
         provider_names = [item["slot"] for item in snapshot]
@@ -249,7 +248,7 @@ class TestStreamingEvents:
         mock_async_iter = AsyncMock()
         mock_async_iter.__aiter__ = AsyncMock(return_value=iter(chunks))
 
-        with patch("router.get_router") as mock_get_router:
+        with patch("quotadrift.router.get_router") as mock_get_router:
             mock_router_instance = AsyncMock()
             mock_router_instance.acompletion.return_value = mock_async_iter
             mock_get_router.return_value = mock_router_instance

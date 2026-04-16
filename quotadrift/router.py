@@ -7,30 +7,27 @@ Wraps the LiteLLM Router to add:
 - Clean model ID extraction from streamed chunks
 """
 
+from functools import lru_cache
+
 from dotenv import load_dotenv
 from litellm import Router
 
-import config
-import model_manager
+from quotadrift import config, model_manager
 
 load_dotenv()
 
-_router: Router | None = None
 
-
+@lru_cache(maxsize=1)
 def get_router() -> Router:
-    global _router
-    if _router is None:
-        _router = Router(
-            model_list=config.MODEL_LIST,
-            fallbacks=config.FALLBACK_CHAIN,
-            allowed_fails=2,
-            cooldown_time=300,  # 5 min cooldown on rate limit
-            retry_after=3,
-            num_retries=1,
-            set_verbose=False,
-        )
-    return _router
+    return Router(
+        model_list=config.MODEL_LIST,
+        fallbacks=config.FALLBACK_CHAIN,
+        allowed_fails=2,
+        cooldown_time=300,  # 5 min cooldown on rate limit
+        retry_after=3,
+        num_retries=1,
+        set_verbose=False,
+    )
 
 
 async def chat(messages: list[dict], system: str | None = None) -> dict:
@@ -43,7 +40,8 @@ async def chat(messages: list[dict], system: str | None = None) -> dict:
     # Get best available model
     slot_name = model_manager.model_manager.get_best_model(request_id)
     if not slot_name:
-        raise Exception("No models available - all circuits open or rate limited")
+        raise RuntimeError(
+            "No models available - all circuits open or rate limited")
 
     # Start request tracking
     model_manager.model_manager.start_request(slot_name, request_id)
@@ -60,22 +58,25 @@ async def chat(messages: list[dict], system: str | None = None) -> dict:
         tokens = response.usage.total_tokens if response.usage else 0
 
         # Record success
-        model_manager.model_manager.record_success(slot_name, request_id, tokens)
+        model_manager.model_manager.record_success(
+            slot_name, request_id, tokens)
 
         # Update rate limits if available
         if hasattr(response, "headers"):
             remaining = response.headers.get("x-ratelimit-remaining")
             reset = response.headers.get("x-ratelimit-reset")
-            model_manager.model_manager.update_rate_limit(slot_name, remaining, reset)
+            model_manager.model_manager.update_rate_limit(
+                slot_name, remaining, reset)
 
         return {
             "content": response.choices[0].message.content,
             "model_used": model_id,
             "tokens": tokens,
         }
-    except Exception as e:
+    except (RuntimeError, ValueError, TypeError, KeyError, OSError, TimeoutError) as exc:
         # Record failure
-        model_manager.model_manager.record_failure(slot_name, request_id, str(e))
+        model_manager.model_manager.record_failure(
+            slot_name, request_id, str(exc))
         raise
 
 
@@ -136,14 +137,14 @@ async def stream_chat(messages: list[dict], system: str | None = None):
                 yield {"type": "token", "content": delta.content}
 
         # Record success and update metrics
-        model_manager.model_manager.record_success(slot_name, request_id, token_count)
+        model_manager.model_manager.record_success(
+            slot_name, request_id, token_count)
 
         # Update rate limits if available
         try:
-            if hasattr(response, "_response_object") and hasattr(
-                response._response_object, "headers"
-            ):
-                headers = response._response_object.headers
+            response_obj = getattr(response, "_response_object", None)
+            headers = getattr(response_obj, "headers", None)
+            if headers is not None:
                 remaining = headers.get(
                     "x-ratelimit-remaining-requests"
                 ) or headers.get("x-ratelimit-remaining")
@@ -153,15 +154,16 @@ async def stream_chat(messages: list[dict], system: str | None = None):
                 model_manager.model_manager.update_rate_limit(
                     slot_name, remaining, reset
                 )
-        except Exception:
+        except (AttributeError, TypeError, ValueError, KeyError):
             pass
 
         yield {"type": "done", "model": model_used, "tokens": token_count}
 
-    except Exception as e:
+    except (RuntimeError, ValueError, TypeError, KeyError, OSError, TimeoutError) as exc:
         # Record failure
-        model_manager.model_manager.record_failure(slot_name, request_id, str(e))
-        yield {"type": "error", "message": str(e)}
+        model_manager.model_manager.record_failure(
+            slot_name, request_id, str(exc))
+        yield {"type": "error", "message": str(exc)}
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +200,7 @@ def _update_rate_limits(slot: str, headers: dict):
                 config.health[slot]["rl_reset_at"] = (
                     datetime.utcnow() + timedelta(seconds=float(reset))
                 ).isoformat()
-            except Exception:
+            except (TypeError, ValueError, OverflowError):
                 pass
 
 
