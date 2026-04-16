@@ -40,8 +40,7 @@ async def chat(messages: list[dict], system: str | None = None) -> dict:
     # Get best available model
     slot_name = model_manager.model_manager.get_best_model(request_id)
     if not slot_name:
-        raise RuntimeError(
-            "No models available - all circuits open or rate limited")
+        raise RuntimeError("No models available - all circuits open or rate limited")
 
     # Start request tracking
     model_manager.model_manager.start_request(slot_name, request_id)
@@ -58,25 +57,29 @@ async def chat(messages: list[dict], system: str | None = None) -> dict:
         tokens = response.usage.total_tokens if response.usage else 0
 
         # Record success
-        model_manager.model_manager.record_success(
-            slot_name, request_id, tokens)
+        model_manager.model_manager.record_success(slot_name, request_id, tokens)
 
         # Update rate limits if available
         if hasattr(response, "headers"):
             remaining = response.headers.get("x-ratelimit-remaining")
             reset = response.headers.get("x-ratelimit-reset")
-            model_manager.model_manager.update_rate_limit(
-                slot_name, remaining, reset)
+            model_manager.model_manager.update_rate_limit(slot_name, remaining, reset)
 
         return {
             "content": response.choices[0].message.content,
             "model_used": model_id,
             "tokens": tokens,
         }
-    except (RuntimeError, ValueError, TypeError, KeyError, OSError, TimeoutError) as exc:
+    except (
+        RuntimeError,
+        ValueError,
+        TypeError,
+        KeyError,
+        OSError,
+        TimeoutError,
+    ) as exc:
         # Record failure
-        model_manager.model_manager.record_failure(
-            slot_name, request_id, str(exc))
+        model_manager.model_manager.record_failure(slot_name, request_id, str(exc))
         raise
 
 
@@ -137,8 +140,7 @@ async def stream_chat(messages: list[dict], system: str | None = None):
                 yield {"type": "token", "content": delta.content}
 
         # Record success and update metrics
-        model_manager.model_manager.record_success(
-            slot_name, request_id, token_count)
+        model_manager.model_manager.record_success(slot_name, request_id, token_count)
 
         # Update rate limits if available
         try:
@@ -159,10 +161,16 @@ async def stream_chat(messages: list[dict], system: str | None = None):
 
         yield {"type": "done", "model": model_used, "tokens": token_count}
 
-    except (RuntimeError, ValueError, TypeError, KeyError, OSError, TimeoutError) as exc:
+    except (
+        RuntimeError,
+        ValueError,
+        TypeError,
+        KeyError,
+        OSError,
+        TimeoutError,
+    ) as exc:
         # Record failure
-        model_manager.model_manager.record_failure(
-            slot_name, request_id, str(exc))
+        model_manager.model_manager.record_failure(slot_name, request_id, str(exc))
         yield {"type": "error", "message": str(exc)}
 
 

@@ -36,7 +36,13 @@ def _run_python(code: str, timeout: int) -> dict:
         }
     except subprocess.TimeoutExpired:
         return {"error": f"Execution timed out after {timeout} seconds."}
-    except (OSError, RuntimeError, ValueError, TypeError, subprocess.SubprocessError) as exc:
+    except (
+        OSError,
+        RuntimeError,
+        ValueError,
+        TypeError,
+        subprocess.SubprocessError,
+    ) as exc:
         return {"error": str(exc)}
     finally:
         if os.path.exists(tmp_path):
@@ -69,7 +75,13 @@ def _run_javascript(code: str, timeout: int) -> dict:
         }
     except subprocess.TimeoutExpired:
         return {"error": f"Execution timed out after {timeout} seconds."}
-    except (OSError, RuntimeError, ValueError, TypeError, subprocess.SubprocessError) as exc:
+    except (
+        OSError,
+        RuntimeError,
+        ValueError,
+        TypeError,
+        subprocess.SubprocessError,
+    ) as exc:
         return {"error": str(exc)}
     finally:
         if os.path.exists(tmp_path):

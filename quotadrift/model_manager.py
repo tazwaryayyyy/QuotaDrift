@@ -304,8 +304,7 @@ class ModelManager:
 
         # Update Prometheus metrics
         MODEL_REQUESTS.labels(model=metrics.model_id, status="success").inc()
-        MODEL_LATENCY.labels(model=metrics.model_id).observe(
-            latency_ms / 1000.0)
+        MODEL_LATENCY.labels(model=metrics.model_id).observe(latency_ms / 1000.0)
         if tokens > 0:
             TOKEN_USAGE.labels(model=metrics.model_id).inc(tokens)
 
@@ -345,9 +344,7 @@ class ModelManager:
         # Clean up trace
         del self.request_traces[request_id]
 
-        logger.error(
-            "Request %s failed on model %s: %s", request_id, slot_name, error
-        )
+        logger.error("Request %s failed on model %s: %s", request_id, slot_name, error)
 
     def update_rate_limit(
         self, slot_name: str, remaining: int | None, reset: str | None
@@ -369,8 +366,7 @@ class ModelManager:
         metrics = self.metrics[slot_name]
 
         # Calculate success rate
-        total_recent = len(metrics.recent_successes) + \
-            len(metrics.recent_failures)
+        total_recent = len(metrics.recent_successes) + len(metrics.recent_failures)
         if total_recent > 0:
             metrics.success_rate = len(metrics.recent_successes) / total_recent
 
@@ -382,8 +378,7 @@ class ModelManager:
 
         # Calculate average cost
         if metrics.recent_costs:
-            metrics.avg_cost_usd = sum(
-                metrics.recent_costs) / len(metrics.recent_costs)
+            metrics.avg_cost_usd = sum(metrics.recent_costs) / len(metrics.recent_costs)
 
         # Calculate load score (requests per minute)
         one_minute_ago_ts = time.time() - 60
@@ -392,8 +387,7 @@ class ModelManager:
             for success_time in metrics.recent_successes
             if success_time >= one_minute_ago_ts
         )
-        metrics.load_score = min(
-            1.0, recent_requests / 10.0)  # Normalize to 0-1
+        metrics.load_score = min(1.0, recent_requests / 10.0)  # Normalize to 0-1
 
     def record_contract_outcome(
         self,

@@ -55,8 +55,7 @@ class TestRouterFailover:
         success_response.usage.total_tokens = 15
 
         # First call fails, second succeeds
-        mock_router.acompletion.side_effect = [
-            rate_limit_error, success_response]
+        mock_router.acompletion.side_effect = [rate_limit_error, success_response]
 
         # Test chat with retry logic
         with patch("quotadrift.router._try_mark_error") as mock_mark_error:

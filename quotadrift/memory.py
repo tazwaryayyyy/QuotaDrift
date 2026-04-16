@@ -73,8 +73,7 @@ class HybridSearcher:
     def add_local(self, text: str, meta: dict):
         self._corpus.append(text)
         self._meta.append(meta)
-        tokenized_corpus = [re.findall(r"\w+", d.lower())
-                            for d in self._corpus]
+        tokenized_corpus = [re.findall(r"\w+", d.lower()) for d in self._corpus]
         self._bm25 = BM25Okapi(tokenized_corpus)
 
     def search(self, query: str, n: int = 5) -> list[dict]:
@@ -82,11 +81,9 @@ class HybridSearcher:
             return []
         tokens = re.findall(r"\w+", query.lower())
         scores = self._bm25.get_scores(tokens)
-        top_idx = sorted(range(len(scores)),
-                         key=lambda i: scores[i], reverse=True)[:n]
+        top_idx = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:n]
         return [
-            {"text": self._corpus[i],
-                "meta": self._meta[i], "score": scores[i]}
+            {"text": self._corpus[i], "meta": self._meta[i], "score": scores[i]}
             for i in top_idx
         ]
 
@@ -171,8 +168,7 @@ def upsert_project(name: str, description: str = "") -> int:
             "INSERT OR IGNORE INTO projects (name, description, created_at) VALUES (?,?,?)",
             (name, description, _now()),
         )
-        row = conn.execute(
-            "SELECT id FROM projects WHERE name=?", (name,)).fetchone()
+        row = conn.execute("SELECT id FROM projects WHERE name=?", (name,)).fetchone()
         return row[0]
 
 
@@ -459,8 +455,7 @@ async def compress_old_messages(session_id: int, keep_recent: int = 10, chat_fn=
 
     old = msgs[:-keep_recent]
 
-    convo_text = "\n".join(
-        f"{m['role'].upper()}: {m['content'][:300]}" for m in old)
+    convo_text = "\n".join(f"{m['role'].upper()}: {m['content'][:300]}" for m in old)
     result = await chat_fn(
         messages=[{"role": "user", "content": convo_text}],
         system=SUMMARIZE_SYSTEM,
@@ -513,8 +508,7 @@ def index_file(project_id: int, filename: str, content: str):
 
     # Embed each file as a chunk for RAG
     try:
-        vec = _get_embedder().encode(
-            f"FILE: {filename}\n{content[:1000]}").tolist()
+        vec = _get_embedder().encode(f"FILE: {filename}\n{content[:1000]}").tolist()
         col = _get_collection()
         doc_id = f"file_{project_id}_{filename}"
         col.upsert(
@@ -545,8 +539,7 @@ def search_project_files(query: str, project_id: int, n: int = 3) -> list[str]:
 def has_project_files(project_id: int) -> bool:
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
-            "SELECT 1 FROM project_files WHERE project_id=? LIMIT 1", (
-                project_id,)
+            "SELECT 1 FROM project_files WHERE project_id=? LIMIT 1", (project_id,)
         ).fetchone()
         return row is not None
 

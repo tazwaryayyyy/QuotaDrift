@@ -201,7 +201,13 @@ class EnhancedAgentRunner:
 
             return result
 
-        except (OSError, RuntimeError, ValueError, TypeError, subprocess.SubprocessError) as exc:
+        except (
+            OSError,
+            RuntimeError,
+            ValueError,
+            TypeError,
+            subprocess.SubprocessError,
+        ) as exc:
             logger.error("Error executing %s code: %s", language, exc)
             return ExecutionResult(
                 stdout="",
@@ -227,8 +233,7 @@ class EnhancedAgentRunner:
         lang_config = LanguageConfig.LANGUAGES[language]
 
         # Write main source file
-        main_file = os.path.join(
-            work_dir, "main" + lang_config["extensions"][0])
+        main_file = os.path.join(work_dir, "main" + lang_config["extensions"][0])
         with open(main_file, "w", encoding="utf-8") as f:
             f.write(code)
 
@@ -455,8 +460,7 @@ def get_runner() -> EnhancedAgentRunner | SimpleAgentRunner:
     """Get the appropriate runner instance."""
     # Check if Docker is available
     try:
-        subprocess.run(["docker", "--version"],
-                       capture_output=True, check=True)
+        subprocess.run(["docker", "--version"], capture_output=True, check=True)
         logger.info("Using Docker-based sandbox runner")
         return EnhancedAgentRunner()
     except (subprocess.CalledProcessError, FileNotFoundError):
