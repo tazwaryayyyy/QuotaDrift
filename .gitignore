@@ -186,7 +186,7 @@ chroma_db/
 quotadrift.log*
 
 # Docker
-.dockerignore
+# Keep .dockerignore tracked for CI build context control
 
 # macOS
 .DS_Store
