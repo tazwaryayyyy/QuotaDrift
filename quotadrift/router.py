@@ -40,7 +40,8 @@ async def chat(messages: list[dict], system: str | None = None) -> dict:
     # Get best available model
     slot_name = model_manager.model_manager.get_best_model(request_id)
     if not slot_name:
-        raise RuntimeError("No models available - all circuits open or rate limited")
+        raise RuntimeError(
+            "No models available - all circuits open or rate limited")
 
     # Start request tracking
     model_manager.model_manager.start_request(slot_name, request_id)
@@ -57,13 +58,15 @@ async def chat(messages: list[dict], system: str | None = None) -> dict:
         tokens = response.usage.total_tokens if response.usage else 0
 
         # Record success
-        model_manager.model_manager.record_success(slot_name, request_id, tokens)
+        model_manager.model_manager.record_success(
+            slot_name, request_id, tokens)
 
         # Update rate limits if available
         if hasattr(response, "headers"):
             remaining = response.headers.get("x-ratelimit-remaining")
             reset = response.headers.get("x-ratelimit-reset")
-            model_manager.model_manager.update_rate_limit(slot_name, remaining, reset)
+            model_manager.model_manager.update_rate_limit(
+                slot_name, remaining, reset)
 
         return {
             "content": response.choices[0].message.content,
@@ -79,11 +82,16 @@ async def chat(messages: list[dict], system: str | None = None) -> dict:
         TimeoutError,
     ) as exc:
         # Record failure
-        model_manager.model_manager.record_failure(slot_name, request_id, str(exc))
+        model_manager.model_manager.record_failure(
+            slot_name, request_id, str(exc))
         raise
 
 
-async def stream_chat(messages: list[dict], system: str | None = None):
+async def stream_chat(
+    messages: list[dict],
+    system: str | None = None,
+    preferred_slot: str | None = None,
+):
     """
     Streaming chat with circuit breaker and dynamic model selection.
     Async generator yielding dicts:
@@ -95,8 +103,23 @@ async def stream_chat(messages: list[dict], system: str | None = None):
 
     request_id = model_manager.get_request_id()
 
-    # Get best available model
-    slot_name = model_manager.model_manager.get_best_model(request_id)
+    # Choose preferred model if requested and available, otherwise use best model.
+    available = model_manager.model_manager.get_available_models()
+    slot_name = None
+
+    if preferred_slot:
+        if preferred_slot in available:
+            slot_name = preferred_slot
+        else:
+            slot_name = model_manager.model_manager.get_best_model(request_id)
+            if slot_name:
+                yield {
+                    "type": "warning",
+                    "content": f"Requested model '{preferred_slot}' is unavailable; routed to '{slot_name}'.",
+                }
+    else:
+        slot_name = model_manager.model_manager.get_best_model(request_id)
+
     if not slot_name:
         yield {
             "type": "error",
@@ -140,7 +163,8 @@ async def stream_chat(messages: list[dict], system: str | None = None):
                 yield {"type": "token", "content": delta.content}
 
         # Record success and update metrics
-        model_manager.model_manager.record_success(slot_name, request_id, token_count)
+        model_manager.model_manager.record_success(
+            slot_name, request_id, token_count)
 
         # Update rate limits if available
         try:
@@ -170,7 +194,8 @@ async def stream_chat(messages: list[dict], system: str | None = None):
         TimeoutError,
     ) as exc:
         # Record failure
-        model_manager.model_manager.record_failure(slot_name, request_id, str(exc))
+        model_manager.model_manager.record_failure(
+            slot_name, request_id, str(exc))
         yield {"type": "error", "message": str(exc)}
 
 

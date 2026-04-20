@@ -785,6 +785,32 @@
       padding: 8px;
     }
 
+    .model-picker-wrap {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .model-picker-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+
+    #model-switch {
+      flex: 1;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      color: var(--text-primary);
+      font-size: 12px;
+      padding: 5px 8px;
+    }
+
     .model-card {
       padding: 10px 12px;
       border-radius: var(--radius-md);
@@ -1355,6 +1381,12 @@
         Model pool
         <span id="refresh-indicator" style="font-size:9px;color:var(--text-muted)">auto-refresh</span>
       </div>
+      <div class="model-picker-wrap">
+        <span class="model-picker-label">Route</span>
+        <select id="model-switch" onchange="onModelSwitchChange(this.value)">
+          <option value="auto">Auto</option>
+        </select>
+      </div>
       <div id="model-cards"></div>
 
       <div class="panel-section">
@@ -1372,6 +1404,7 @@
         <input type="file" id="file-input" multiple
           accept=".py,.js,.ts,.jsx,.tsx,.html,.css,.md,.json,.yaml,.yml,.toml,.sh,.sql,.txt,.rs,.go"
           onchange="uploadFiles(this.files)">
+        <div id="upload-status"></div>
         <div id="indexed-files"></div>
 
         <div class="sidebar-section" id="code-runner-panel" style="display: none;">
@@ -1418,6 +1451,7 @@
     let activeModelId = null;
     let currentContext = [];
     let indexedFiles = JSON.parse(localStorage.getItem('indexedFiles') || '[]');
+    let selectedModelSlot = localStorage.getItem('selectedModelSlot') || 'auto';
 
     const MODEL_COLORS = {
       'groq': '#f97316',
@@ -1501,6 +1535,10 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project_name: name, project_description: desc }),
       });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText || `HTTP ${res.status}`);
+      }
       const data = await res.json();
 
       sessionId = data.session_id;
@@ -1515,6 +1553,9 @@
 
     async function loadSessions() {
       const res = await fetch('/api/sessions');
+      if (!res.ok) {
+        throw new Error(`Failed to load sessions (${res.status})`);
+      }
       const data = await res.json();
       renderSessions(data.sessions);
     }
@@ -1545,6 +1586,9 @@
     async function loadSession(id) {
       sessionId = id;
       const res = await fetch(`/api/history/${id}`);
+      if (!res.ok) {
+        throw new Error(`Failed to load history (${res.status})`);
+      }
       const data = await res.json();
 
       clearMessages();
@@ -1606,8 +1650,20 @@
         const res = await fetch('/api/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId, message: msg }),
+          body: JSON.stringify({
+            session_id: sessionId,
+            message: msg,
+            preferred_model: selectedModelSlot === 'auto' ? null : selectedModelSlot,
+          }),
         });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(errText || `HTTP ${res.status}`);
+        }
+        if (!res.body) {
+          throw new Error('Streaming response body is missing');
+        }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -1874,15 +1930,50 @@
     // ──────────────────────────────────────────────────────────────────────
     async function refreshModelStatus() {
       try {
-        const [mRes, qRes] = await Promise.all([
-          fetch('/api/model-status'),
-          fetch('/api/quota-forecast'),
-        ]);
+        const mRes = await fetch('/api/model-status');
+        if (!mRes.ok) {
+          throw new Error(`Failed to load model status (${mRes.status})`);
+        }
         const mData = await mRes.json();
-        const qData = await qRes.json();
-        renderModelCards(mData.models, qData);
+        renderModelSelector(mData.models);
+        renderModelCards(mData.models);
         renderCacheStats(mData.cache_stats);
       } catch (_) { }
+    }
+
+    function renderModelSelector(models) {
+      const sel = document.getElementById('model-switch');
+      if (!sel) return;
+
+      const previous = selectedModelSlot;
+      const options = ['<option value="auto">Auto (best available)</option>'];
+
+      for (const model of models) {
+        const status = model.status || 'unknown';
+        options.push(
+          `<option value="${escHtml(model.id)}">${escHtml(model.display)} · ${escHtml(status)}</option>`
+        );
+      }
+
+      sel.innerHTML = options.join('');
+
+      const valid = ['auto', ...models.map(m => m.id)];
+      if (!valid.includes(previous)) {
+        selectedModelSlot = 'auto';
+      }
+
+      sel.value = selectedModelSlot;
+    }
+
+    function onModelSwitchChange(value) {
+      selectedModelSlot = value || 'auto';
+      localStorage.setItem('selectedModelSlot', selectedModelSlot);
+      toast(
+        selectedModelSlot === 'auto'
+          ? 'Routing set to auto'
+          : `Routing pinned to ${selectedModelSlot}`,
+        'success'
+      );
     }
 
     function renderCacheStats(stats) {
@@ -1996,8 +2087,20 @@
         const res = await fetch('/api/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId, message: planPrompt }),
+          body: JSON.stringify({
+            session_id: sessionId,
+            message: planPrompt,
+            preferred_model: selectedModelSlot === 'auto' ? null : selectedModelSlot,
+          }),
         });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(errText || `HTTP ${res.status}`);
+        }
+        if (!res.body) {
+          throw new Error('Streaming response body is missing');
+        }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -2136,16 +2239,25 @@
     // File upload
     // ──────────────────────────────────────────────────────────────────────
     async function uploadFiles(fileList) {
+      if (!fileList || fileList.length === 0) {
+        toast('No files selected', 'error');
+        return;
+      }
+
       const projectName = document.getElementById('project-name').value || 'default';
       const formData = new FormData();
       formData.append('project_name', projectName);
       for (const file of fileList) formData.append('files', file);
 
       const statusEl = document.getElementById('upload-status');
-      statusEl.textContent = 'Uploading…';
+      if (statusEl) statusEl.textContent = 'Uploading...';
 
       try {
         const res = await fetch('/api/project/index', { method: 'POST', body: formData });
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(errText || `HTTP ${res.status}`);
+        }
         const data = await res.json();
 
         if (data.indexed.length) {
@@ -2155,10 +2267,10 @@
           toast(`Indexed ${data.indexed.length} file(s)`, 'success');
         }
         if (data.skipped.length) toast(`Skipped ${data.skipped.length}`, 'error');
-      } catch (_) {
-        toast('Upload failed', 'error');
+      } catch (err) {
+        toast('Upload failed: ' + (err?.message || 'unknown error'), 'error');
       } finally {
-        statusEl.textContent = '';
+        if (statusEl) statusEl.textContent = '';
       }
     }
 
@@ -2258,8 +2370,21 @@
         const res = await fetch('/api/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId, message: messageToSend, prune_n: 2 }),
+          body: JSON.stringify({
+            session_id: sessionId,
+            message: messageToSend,
+            prune_n: 2,
+            preferred_model: selectedModelSlot === 'auto' ? null : selectedModelSlot,
+          }),
         });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(errText || `HTTP ${res.status}`);
+        }
+        if (!res.body) {
+          throw new Error('Streaming response body is missing');
+        }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
