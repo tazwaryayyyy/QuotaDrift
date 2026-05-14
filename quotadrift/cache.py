@@ -22,8 +22,8 @@ import numpy as np
 
 from quotadrift.embedding import get_embedding_model
 
-CACHE_TTL: float = 3600.0   # 1 hour default
-MAX_ENTRIES: int = 200       # Hard cap on in-memory and DB working set
+CACHE_TTL: float = 3600.0  # 1 hour default
+MAX_ENTRIES: int = 200  # Hard cap on in-memory and DB working set
 
 _DEFAULT_CACHE_DB = Path.home() / ".quotadrift" / "cache.db"
 
@@ -31,7 +31,9 @@ _DEFAULT_CACHE_DB = Path.home() / ".quotadrift" / "cache.db"
 class CacheStore:
     """SQLite persistence layer for semantic cache entries."""
 
-    def __init__(self, db_path: Path = _DEFAULT_CACHE_DB, ttl: float = CACHE_TTL) -> None:
+    def __init__(
+        self, db_path: Path = _DEFAULT_CACHE_DB, ttl: float = CACHE_TTL
+    ) -> None:
         self._db_path = db_path
         self._ttl = ttl
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -44,7 +46,7 @@ class CacheStore:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA mmap_size=134217728")  # 128 MB
-        conn.execute("PRAGMA cache_size=-65536")     # 64 MB
+        conn.execute("PRAGMA cache_size=-65536")  # 64 MB
         return conn
 
     def _init_db(self) -> None:
@@ -184,8 +186,7 @@ class SemanticCache:
         for item in self._store:
             norm_q = np.linalg.norm(q_vec)
             norm_i = np.linalg.norm(item["vec"])
-            score = float(
-                np.dot(q_vec, item["vec"]) / (norm_q * norm_i + 1e-8))
+            score = float(np.dot(q_vec, item["vec"]) / (norm_q * norm_i + 1e-8))
             if score > best_score:
                 best_score = score
                 best_item = item
@@ -227,8 +228,7 @@ class SemanticCache:
 
     @property
     def stats(self) -> dict:
-        pct = (self.hits / self.total_queries *
-               100) if self.total_queries > 0 else 0.0
+        pct = (self.hits / self.total_queries * 100) if self.total_queries > 0 else 0.0
         return {
             "hits": self.hits,
             "total": self.total_queries,

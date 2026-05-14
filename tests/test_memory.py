@@ -6,15 +6,13 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-
 # ---------------------------------------------------------------------------
 # Helper: isolated HybridSearcher with a real temp DB
 # ---------------------------------------------------------------------------
 
+
 def _make_searcher(project_id: int, db_path: Path):  # noqa: ARG001 — kept for future use
     """Instantiate a HybridSearcher with an empty temp DB."""
-    import importlib
-    import sys
 
     # Temporarily override the DB_PATH constant in the memory module so the
     # HybridSearcher reads from our temp file, not the real switchboard.db.
@@ -28,6 +26,7 @@ def _make_searcher(project_id: int, db_path: Path):  # noqa: ARG001 — kept for
 
     try:
         from quotadrift.memory import HybridSearcher
+
         searcher = HybridSearcher(project_id)
     finally:
         mem_module.DB_PATH = original_db
@@ -38,6 +37,7 @@ def _make_searcher(project_id: int, db_path: Path):  # noqa: ARG001 — kept for
 # ---------------------------------------------------------------------------
 # BM25 rebuild efficiency test (FIX #4)
 # ---------------------------------------------------------------------------
+
 
 def test_bulk_load_triggers_single_bm25_rebuild(tmp_path):
     """Loading N documents from the DB must build the BM25 index exactly once,
@@ -59,7 +59,8 @@ def test_bulk_load_triggers_single_bm25_rebuild(tmp_path):
     try:
         # Ensure there is a project row first.
         conn.execute(
-            "INSERT OR IGNORE INTO projects (id, name) VALUES (?, ?)", (1, "test_project")
+            "INSERT OR IGNORE INTO projects (id, name) VALUES (?, ?)",
+            (1, "test_project"),
         )
         for i in range(5):
             conn.execute(
@@ -92,6 +93,7 @@ def test_bulk_load_triggers_single_bm25_rebuild(tmp_path):
 # ---------------------------------------------------------------------------
 # WAL mode test (FIX #5)
 # ---------------------------------------------------------------------------
+
 
 def test_wal_mode_active_on_connection(tmp_path):
     """Every connection opened via _db() must have journal_mode=WAL active."""

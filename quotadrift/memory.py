@@ -42,6 +42,7 @@ _hybrid_searchers: dict[int, "HybridSearcher"] = {}
 # Production SQLite connection helper
 # ---------------------------------------------------------------------------
 
+
 @contextlib.contextmanager
 def _db():
     """Production SQLite connection with WAL mode, 5 s busy timeout, and
@@ -58,7 +59,7 @@ def _db():
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA mmap_size=1073741824")  # 1 GB
-        conn.execute("PRAGMA cache_size=-262144")     # 256 MB
+        conn.execute("PRAGMA cache_size=-262144")  # 256 MB
         yield conn
         conn.commit()
     except Exception:
@@ -75,6 +76,7 @@ def _sqlite_retry(max_retries: int = 3, base_delay: float = 0.1):
     level. This decorator is an extra safety net for the rare case where 5 s was
     insufficient (e.g., a long migration holding the write lock).
     """
+
     def decorator(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
@@ -86,14 +88,19 @@ def _sqlite_retry(max_retries: int = 3, base_delay: float = 0.1):
                     if "database is locked" not in str(exc):
                         raise
                     last_exc = exc
-                    delay = base_delay * (2 ** attempt)
+                    delay = base_delay * (2**attempt)
                     logger.warning(
                         "SQLite locked on %s (attempt %d/%d), retrying in %.2fs",
-                        fn.__name__, attempt + 1, max_retries, delay,
+                        fn.__name__,
+                        attempt + 1,
+                        max_retries,
+                        delay,
                     )
                     time.sleep(delay)
             raise last_exc  # type: ignore[misc]
+
         return wrapper
+
     return decorator
 
 
@@ -131,8 +138,7 @@ class HybridSearcher:
                 (self.project_id,),
             ).fetchall()
             for row in rows:
-                self._add_to_corpus(
-                    row["content"], {"filename": row["filename"]})
+                self._add_to_corpus(row["content"], {"filename": row["filename"]})
         self.rebuild_bm25()
 
     def _add_to_corpus(self, text: str, meta: dict) -> None:
@@ -147,8 +153,7 @@ class HybridSearcher:
             self._bm25 = None
             self._dirty = False
             return
-        tokenized_corpus = [re.findall(r"\w+", d.lower())
-                            for d in self._corpus]
+        tokenized_corpus = [re.findall(r"\w+", d.lower()) for d in self._corpus]
         self._bm25 = BM25Okapi(tokenized_corpus)
         self._dirty = False
 
@@ -167,11 +172,9 @@ class HybridSearcher:
             return []
         tokens = re.findall(r"\w+", query.lower())
         scores = self._bm25.get_scores(tokens)
-        top_idx = sorted(range(len(scores)),
-                         key=lambda i: scores[i], reverse=True)[:n]
+        top_idx = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:n]
         return [
-            {"text": self._corpus[i],
-                "meta": self._meta[i], "score": scores[i]}
+            {"text": self._corpus[i], "meta": self._meta[i], "score": scores[i]}
             for i in top_idx
         ]
 
@@ -271,8 +274,7 @@ def upsert_project(name: str, description: str = "") -> int:
             "INSERT OR IGNORE INTO projects (name, description, created_at) VALUES (?,?,?)",
             (name, description, _now()),
         )
-        row = conn.execute(
-            "SELECT id FROM projects WHERE name=?", (name,)).fetchone()
+        row = conn.execute("SELECT id FROM projects WHERE name=?", (name,)).fetchone()
         return row[0]
 
 
@@ -559,8 +561,7 @@ async def compress_old_messages(session_id: int, keep_recent: int = 10, chat_fn=
 
     old = msgs[:-keep_recent]
 
-    convo_text = "\n".join(
-        f"{m['role'].upper()}: {m['content'][:300]}" for m in old)
+    convo_text = "\n".join(f"{m['role'].upper()}: {m['content'][:300]}" for m in old)
     result = await chat_fn(
         messages=[{"role": "user", "content": convo_text}],
         system=SUMMARIZE_SYSTEM,
@@ -613,8 +614,9 @@ def index_file(project_id: int, filename: str, content: str):
 
     # Embed each file as a chunk for RAG
     try:
-        vec = get_embedding_model().encode(
-            f"FILE: {filename}\n{content[:1000]}").tolist()
+        vec = (
+            get_embedding_model().encode(f"FILE: {filename}\n{content[:1000]}").tolist()
+        )
         col = _get_collection()
         doc_id = f"file_{project_id}_{filename}"
         col.upsert(
@@ -645,8 +647,7 @@ def search_project_files(query: str, project_id: int, n: int = 3) -> list[str]:
 def has_project_files(project_id: int) -> bool:
     with _db() as conn:
         row = conn.execute(
-            "SELECT 1 FROM project_files WHERE project_id=? LIMIT 1", (
-                project_id,)
+            "SELECT 1 FROM project_files WHERE project_id=? LIMIT 1", (project_id,)
         ).fetchone()
         return row is not None
 

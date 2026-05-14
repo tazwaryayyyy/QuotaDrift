@@ -42,11 +42,6 @@ from prometheus_client import (
 )
 from pydantic import BaseModel
 
-# Re-export shared metric objects so legacy import paths resolve.
-# The noqa suppresses the "unused import" lint warning — these names are
-# intentionally re-exported, not consumed directly in this module.
-from quotadrift.metrics import MODEL_LATENCY, MODEL_REQUESTS, TOKEN_USAGE  # noqa: F401
-
 from quotadrift import (
     cache,
     compiler,
@@ -55,11 +50,16 @@ from quotadrift import (
     memory,
     model_manager,
 )
+from quotadrift import mcp_server as _mcp_module
 from quotadrift import (
     router as ai_router,
 )
-from quotadrift import mcp_server as _mcp_module
 from quotadrift.contract_models import OutcomeRecord, RequestContract
+
+# Re-export shared metric objects so legacy import paths resolve.
+# The noqa suppresses the "unused import" lint warning — these names are
+# intentionally re-exported, not consumed directly in this module.
+from quotadrift.metrics import MODEL_LATENCY, MODEL_REQUESTS, TOKEN_USAGE  # noqa: F401
 
 
 def _experimental_agent_runner():
@@ -72,7 +72,9 @@ def _experimental_agent_runner():
     startup, defeating the purpose of the _experimental package gate.
     """
     from quotadrift._experimental import enhanced_agent_runner  # noqa: PLC0415
+
     return enhanced_agent_runner
+
 
 load_dotenv()
 
@@ -249,8 +251,7 @@ async def test_provider_connectivity():
 
     # Only test if we have at least one provider key
     if not os.getenv("GROQ_API_KEY"):
-        logger.warning(
-            "Skipping connectivity tests - no primary provider key found")
+        logger.warning("Skipping connectivity tests - no primary provider key found")
         return
 
     provider_names = []
@@ -398,8 +399,7 @@ async def new_session(body: NewSessionRequest):
     project_id = memory.upsert_project(
         body.project_name, body.project_description or ""
     )
-    session_id = memory.create_session(
-        project_id, body.session_title or "New session")
+    session_id = memory.create_session(project_id, body.session_title or "New session")
     return {
         "project_id": project_id,
         "session_id": session_id,
@@ -559,8 +559,7 @@ async def chat_contract(body: ContractChatRequest):
     priced_provider = winner_provider or (
         selected_providers[0] if selected_providers else "unknown"
     )
-    final_cost = contract_engine.estimate_cost_usd(
-        priced_provider, result["tokens"])
+    final_cost = contract_engine.estimate_cost_usd(priced_provider, result["tokens"])
 
     contract_met = bool(
         result["success"]
@@ -586,8 +585,7 @@ async def chat_contract(body: ContractChatRequest):
             tokens=result["tokens"],
         )
         memory.update_session_model(body.session_id, result["model_used"])
-        cache.get_cache().set(
-            body.message, result["content"], result["model_used"])
+        cache.get_cache().set(body.message, result["content"], result["model_used"])
 
     outcome = OutcomeRecord(
         request_id=request_id,
@@ -686,8 +684,7 @@ async def chat_stream(body: ChatRequest):
             # Use GitHub Models (secondary) for fast query rewriting if files exist
             search_query = await memory.rewrite_query(body.message, ai_router.chat)
 
-        relevant_session = memory.semantic_search(
-            body.message, body.session_id, n=2)
+        relevant_session = memory.semantic_search(body.message, body.session_id, n=2)
         relevant_files = memory.hybrid_search_rrf(
             search_query, project_id, body.session_id, n=3
         )
@@ -714,8 +711,7 @@ async def chat_stream(body: ChatRequest):
 
         if relevant_session:
             system_parts.append(
-                "\nRelevant session context:\n" +
-                "\n---\n".join(relevant_session)
+                "\nRelevant session context:\n" + "\n---\n".join(relevant_session)
             )
         if relevant_files:
             system_parts.append(
@@ -809,8 +805,7 @@ async def edit_message(request: EditMessageRequest):
         messages = memory.get_messages_for_llm(request.session_id)
 
         if request.message_index >= len(messages):
-            raise HTTPException(
-                status_code=404, detail="Message index out of range")
+            raise HTTPException(status_code=404, detail="Message index out of range")
 
         # Edit the message
         messages[request.message_index]["content"] = request.new_content
@@ -852,8 +847,7 @@ async def regenerate_message(request: EditMessageRequest):
         all_messages = memory.get_messages_for_llm(request.session_id)
 
         if request.message_index >= len(all_messages):
-            raise HTTPException(
-                status_code=404, detail="Message index out of range")
+            raise HTTPException(status_code=404, detail="Message index out of range")
 
         # Keep messages before the target
         messages_to_regenerate = all_messages[: request.message_index]
@@ -933,8 +927,7 @@ async def create_share_link(request: ShareRequest):
 async def get_shared_session(token: str):
     """Get a shared session by token."""
     if token not in share_tokens:
-        raise HTTPException(
-            status_code=404, detail="Share link not found or expired")
+        raise HTTPException(status_code=404, detail="Share link not found or expired")
 
     share_data = share_tokens[token]
     expires_at = datetime.fromisoformat(share_data["expires_at"])
@@ -986,8 +979,7 @@ async def get_shared_session(token: str):
             },
         }
     except Exception:
-        raise HTTPException(
-            status_code=404, detail="Session not found") from None
+        raise HTTPException(status_code=404, detail="Session not found") from None
 
 
 @app.get("/shared/{token}")
@@ -1100,45 +1092,36 @@ async def test_providers():
 
 # Request metrics
 REQUEST_COUNT = Counter(
-    "quotadrift_requests_total", "Total requests", [
-        "method", "endpoint", "status"]
+    "quotadrift_requests_total", "Total requests", ["method", "endpoint", "status"]
 )
 REQUEST_DURATION = Histogram(
-    "quotadrift_request_duration_seconds", "Request duration", [
-        "method", "endpoint"]
+    "quotadrift_request_duration_seconds", "Request duration", ["method", "endpoint"]
 )
-ACTIVE_REQUESTS = Gauge("quotadrift_active_requests",
-                        "Currently active requests")
+ACTIVE_REQUESTS = Gauge("quotadrift_active_requests", "Currently active requests")
 
 # Provider metrics
 PROVIDER_REQUESTS = Counter(
-    "quotadrift_provider_requests_total", "Provider requests", [
-        "provider", "status"]
+    "quotadrift_provider_requests_total", "Provider requests", ["provider", "status"]
 )
 PROVIDER_LATENCY = Histogram(
-    "quotadrift_provider_latency_seconds", "Provider response time", [
-        "provider"]
+    "quotadrift_provider_latency_seconds", "Provider response time", ["provider"]
 )
 PROVIDER_TOKENS = Counter(
     "quotadrift_provider_tokens_total", "Tokens used by provider", ["provider"]
 )
 PROVIDER_ERRORS = Counter(
-    "quotadrift_provider_errors_total", "Provider errors", [
-        "provider", "error_type"]
+    "quotadrift_provider_errors_total", "Provider errors", ["provider", "error_type"]
 )
 
 # System metrics
 SYSTEM_CPU_USAGE = Gauge("quotadrift_system_cpu_percent", "System CPU usage")
-SYSTEM_MEMORY_USAGE = Gauge(
-    "quotadrift_system_memory_percent", "System memory usage")
-SYSTEM_DISK_USAGE = Gauge(
-    "quotadrift_system_disk_percent", "System disk usage")
+SYSTEM_MEMORY_USAGE = Gauge("quotadrift_system_memory_percent", "System memory usage")
+SYSTEM_DISK_USAGE = Gauge("quotadrift_system_disk_percent", "System disk usage")
 
 # Application metrics
 CACHE_HITS = Counter("quotadrift_cache_hits_total", "Cache hits")
 CACHE_MISSES = Counter("quotadrift_cache_misses_total", "Cache misses")
-SESSIONS_CREATED = Counter(
-    "quotadrift_sessions_created_total", "Sessions created")
+SESSIONS_CREATED = Counter("quotadrift_sessions_created_total", "Sessions created")
 MESSAGES_PROCESSED = Counter(
     "quotadrift_messages_processed_total", "Messages processed"
 )
@@ -1281,8 +1264,7 @@ def calculate_quota_forecast(model: dict) -> dict:
         remaining = max(
             0, limit_info["daily"] - projected_monthly
         )  # daily contains monthly limit
-        usage_percent = min(
-            100, (projected_monthly / limit_info["daily"]) * 100)
+        usage_percent = min(100, (projected_monthly / limit_info["daily"]) * 100)
     else:
         remaining = limit_info["daily"]
         usage_percent = 0

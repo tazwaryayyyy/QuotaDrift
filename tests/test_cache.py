@@ -1,19 +1,19 @@
 """
 Tests for cache.py — CacheStore persistence, TTL eviction, and SemanticCache behaviour.
 """
+
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import pytest
 
-from quotadrift.cache import CacheStore, MAX_ENTRIES, SemanticCache
-
+from quotadrift.cache import MAX_ENTRIES, CacheStore, SemanticCache
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_store(tmp_path: Path, ttl: float = 3600.0) -> CacheStore:
     return CacheStore(db_path=tmp_path / "cache.db", ttl=ttl)
@@ -27,6 +27,7 @@ def _dummy_vec(seed: int = 0) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Basic persistence
 # ---------------------------------------------------------------------------
+
 
 def test_append_and_load_round_trip(tmp_path):
     """Entries written via append() must be retrievable via load_recent()."""
@@ -57,6 +58,7 @@ def test_load_recent_survives_new_store_instance(tmp_path):
 # ---------------------------------------------------------------------------
 # TTL eviction (the test the first pass was missing)
 # ---------------------------------------------------------------------------
+
 
 def test_evict_expired_removes_stale_entries(tmp_path):
     """evict_expired() must delete entries older than the TTL."""
@@ -105,6 +107,7 @@ def test_load_recent_respects_ttl_without_explicit_evict(tmp_path):
 # MAX_ENTRIES cap
 # ---------------------------------------------------------------------------
 
+
 def test_evict_expired_caps_at_max_entries(tmp_path):
     """After inserting more than MAX_ENTRIES rows, evict_expired() must trim
     the table down to MAX_ENTRIES most-recent entries."""
@@ -123,6 +126,7 @@ def test_evict_expired_caps_at_max_entries(tmp_path):
 # ---------------------------------------------------------------------------
 # SemanticCache integration (smoke test — no live embedder)
 # ---------------------------------------------------------------------------
+
 
 def test_semantic_cache_set_and_hit(tmp_path):
     """set() followed by get() for an identical query must return a cache hit."""

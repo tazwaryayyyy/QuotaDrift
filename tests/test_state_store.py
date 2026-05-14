@@ -19,6 +19,7 @@ def store(tmp_path):
 # Round-trip persistence
 # ---------------------------------------------------------------------------
 
+
 def test_persistence_round_trip(tmp_path):
     """State saved to a StateStore must be readable from a new instance
     pointing at the same file, confirming that data is durably written and
@@ -53,12 +54,28 @@ def test_persistence_round_trip(tmp_path):
 
 def test_save_then_update_reflects_new_values(store):
     """Calling save() twice for the same model must update, not duplicate."""
-    store.save("primary", {"circuit_state": "closed", "failure_count": 0,
-                           "last_failure": None, "latency_avg": 300.0,
-                           "reliability": 0.95, "request_count": 20})
-    store.save("primary", {"circuit_state": "open", "failure_count": 3,
-                           "last_failure": 1700000000.0, "latency_avg": 900.0,
-                           "reliability": 0.70, "request_count": 25})
+    store.save(
+        "primary",
+        {
+            "circuit_state": "closed",
+            "failure_count": 0,
+            "last_failure": None,
+            "latency_avg": 300.0,
+            "reliability": 0.95,
+            "request_count": 20,
+        },
+    )
+    store.save(
+        "primary",
+        {
+            "circuit_state": "open",
+            "failure_count": 3,
+            "last_failure": 1700000000.0,
+            "latency_avg": 900.0,
+            "reliability": 0.70,
+            "request_count": 25,
+        },
+    )
 
     loaded = store.load("primary")
     assert loaded["circuit_state"] == "open"
@@ -69,12 +86,12 @@ def test_save_then_update_reflects_new_values(store):
 # Missing model sentinel
 # ---------------------------------------------------------------------------
 
+
 def test_unknown_model_returns_none(store):
     """load() for a model that has never been saved must return None."""
     result = store.load("nonexistent_slot_xyz")
     assert result is None, (
-        "Expected None for an unknown model slot, "
-        f"but got: {result!r}"
+        f"Expected None for an unknown model slot, but got: {result!r}"
     )
 
 
@@ -82,14 +99,31 @@ def test_unknown_model_returns_none(store):
 # load_all
 # ---------------------------------------------------------------------------
 
+
 def test_load_all_returns_all_saved_models(store):
     """load_all() must return one entry per saved model slot."""
-    store.save("primary", {"circuit_state": "closed", "failure_count": 0,
-                           "last_failure": None, "latency_avg": 300.0,
-                           "reliability": 0.95, "request_count": 10})
-    store.save("secondary", {"circuit_state": "closed", "failure_count": 0,
-                             "last_failure": None, "latency_avg": 500.0,
-                             "reliability": 0.90, "request_count": 5})
+    store.save(
+        "primary",
+        {
+            "circuit_state": "closed",
+            "failure_count": 0,
+            "last_failure": None,
+            "latency_avg": 300.0,
+            "reliability": 0.95,
+            "request_count": 10,
+        },
+    )
+    store.save(
+        "secondary",
+        {
+            "circuit_state": "closed",
+            "failure_count": 0,
+            "last_failure": None,
+            "latency_avg": 500.0,
+            "reliability": 0.90,
+            "request_count": 5,
+        },
+    )
 
     all_rows = store.load_all()
     assert "primary" in all_rows

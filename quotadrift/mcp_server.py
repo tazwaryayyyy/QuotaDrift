@@ -59,7 +59,8 @@ class MCPServer:
             for cid in stale:
                 self.clients.pop(cid, None)
                 logger.info(
-                    "Reaped stale MCP client %s (idle > %.0fs)", cid, max_idle_seconds)
+                    "Reaped stale MCP client %s (idle > %.0fs)", cid, max_idle_seconds
+                )
 
     async def handle_message(self, client_id: str, message: dict, tools_registry: dict):
         if client_id not in self.clients:

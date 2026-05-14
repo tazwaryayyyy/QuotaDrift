@@ -5,8 +5,6 @@ All tests operate on the public surface — inputs and return values — rather
 than asserting on internal call counts or attribute access patterns.
 """
 
-import pytest
-
 from quotadrift.contract_engine import PRIOR_STRENGTH, decide_strategy
 from quotadrift.contract_models import RequestContract
 
@@ -43,6 +41,7 @@ def _provider(
 # Rejection tests
 # ---------------------------------------------------------------------------
 
+
 def test_no_providers_available_rejects():
     """All providers failed or cooling → REJECT with no eligible providers."""
     providers = [
@@ -70,6 +69,7 @@ def test_impossible_latency_contract_rejects_explicitly():
 # Fulfillment tests
 # ---------------------------------------------------------------------------
 
+
 def test_healthy_provider_gets_single_route():
     """A single healthy provider that satisfies all contract terms → single strategy."""
     providers = [_provider("primary")]
@@ -83,8 +83,12 @@ def test_healthy_provider_gets_single_route():
 def test_degraded_route_allowed_when_degrade_true():
     """When allow_degraded=True a slightly-below-threshold provider can be selected."""
     providers = [_provider("primary", success_rate=0.70, requests=100)]
-    strict = decide_strategy(_contract(min_reliability=0.85, allow_degraded=False), providers)
-    lenient = decide_strategy(_contract(min_reliability=0.85, allow_degraded=True), providers)
+    strict = decide_strategy(
+        _contract(min_reliability=0.85, allow_degraded=False), providers
+    )
+    lenient = decide_strategy(
+        _contract(min_reliability=0.85, allow_degraded=True), providers
+    )
 
     # With allow_degraded=True the engine MUST NOT hard-reject when at least
     # one provider exists; with allow_degraded=False the reject path is OK.
@@ -98,7 +102,9 @@ def test_high_reliability_contract_may_select_hedged():
         _provider("primary", success_rate=0.95, requests=100),
         _provider("secondary", success_rate=0.95, requests=100),
     ]
-    result = decide_strategy(_contract(min_reliability=0.97, max_cost_usd=1.00), providers)
+    result = decide_strategy(
+        _contract(min_reliability=0.97, max_cost_usd=1.00), providers
+    )
 
     # Either hedged or single is acceptable — we just need a fulfillment decision.
     assert result.enforcement == "fulfill"
@@ -107,6 +113,7 @@ def test_high_reliability_contract_may_select_hedged():
 # ---------------------------------------------------------------------------
 # Bayesian bootstrapping tests (FIX #3)
 # ---------------------------------------------------------------------------
+
 
 def test_new_provider_can_be_selected_without_history():
     """A provider with 0 observed requests must NOT be permanently excluded.
@@ -136,7 +143,9 @@ def test_degraded_observed_reliability_penalizes_provider():
 
     # With one fresh and one degraded provider, decide which is ranked higher.
     providers = [degraded, fresh]
-    result = decide_strategy(_contract(min_reliability=0.50, max_cost_usd=1.00), providers)
+    result = decide_strategy(
+        _contract(min_reliability=0.50, max_cost_usd=1.00), providers
+    )
 
     if result.selected_providers is not None and "primary" in result.selected_providers:
         # If both qualify, the fresh provider should rank at least as high.
