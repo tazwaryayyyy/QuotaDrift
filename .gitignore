@@ -172,6 +172,9 @@ cython_debug/
 # QuotaDrift specific
 # Database files
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 *.sqlite
 *.sqlite3
 switchboard.db
