@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 from typing import Any, cast
 
@@ -6,7 +7,32 @@ from quotadrift import config
 from quotadrift import router as ai_router
 from quotadrift.contract_models import DecisionResult, RequestContract
 
+logger = logging.getLogger("contract_engine")
+
 TOKENS_PER_REQUEST_ESTIMATE = 1200
+
+# ---------------------------------------------------------------------------
+# Bayesian bootstrapping constants
+# ---------------------------------------------------------------------------
+# Number of observed requests needed before the empirical reliability fully
+# replaces the config-declared prior. Below this count, the estimate is a
+# weighted blend of prior + observed, preventing zero-reliability cold starts.
+PRIOR_STRENGTH: int = 10
+_DEFAULT_PRIOR: float = 0.80
+
+# Config-declared reliability priors, ordered roughly by tier. These values
+# reflect the expected long-run success rate for each provider slot and serve
+# as the starting point before any live observations are available.
+_CONFIG_PRIOR_RELIABILITY: dict[str, float] = {
+    "primary": 0.95,
+    "secondary": 0.92,
+    "tertiary": 0.90,
+    "quaternary": 0.88,
+    "siliconflow": 0.85,
+    "huggingface": 0.80,
+    "cloudflare": 0.83,
+    "fallback": 0.78,
+}
 
 # Conservative per-1k token prices for deterministic contract checks.
 _PRICE_PER_1K = {
@@ -29,7 +55,8 @@ def _risk_level(
 ) -> str:
     reliability_gap = max(0.0, min_reliability - expected_reliability)
     latency_pressure = (
-        expected_latency_ms / max(1, max_latency_ms) if max_latency_ms > 0 else 1.0
+        expected_latency_ms /
+        max(1, max_latency_ms) if max_latency_ms > 0 else 1.0
     )
     if reliability_gap > 0.08 or latency_pressure > 0.95:
         return "high"
@@ -58,11 +85,32 @@ def _expected_model_id(provider_slot: str) -> str:
 def _provider_score(
     provider: dict[str, Any],
     contract: RequestContract,
-) -> tuple[float, float, int, float, int]:
-    reliability = float(provider.get("success_rate", 0.0) or 0.0)
+) -> tuple[float, float, int, float, int, bool]:
+    """Compute a composite routing score using a Bayesian reliability estimate.
+
+    New providers have 0 observed requests and would get reliability=0 under a
+    pure empirical model, making them permanently unroutable until they
+    accumulate data — a catch-22. We blend the observed reliability with a
+    config-declared prior, weighted by observed request count vs PRIOR_STRENGTH.
+
+    Returns:
+        (total_score, effective_reliability, latency_ms, est_cost,
+         request_count, on_prior)
+    where ``on_prior=True`` means the estimate is still config-declared rather
+    than empirically confirmed.
+    """
+    observed_reliability = float(provider.get("success_rate", 0.0) or 0.0)
     request_count = int(provider.get("requests", 0) or 0)
-    confidence = min(1.0, request_count / 50.0)
-    adjusted_reliability = reliability * confidence
+    provider_id = str(provider.get("id", ""))
+
+    # Bayesian weight: 0 when no data, 1 when request_count >= PRIOR_STRENGTH.
+    observed_weight = min(1.0, request_count / PRIOR_STRENGTH)
+    config_prior = _CONFIG_PRIOR_RELIABILITY.get(provider_id, _DEFAULT_PRIOR)
+    effective_reliability = (
+        config_prior * (1.0 - observed_weight)
+        + observed_reliability * observed_weight
+    )
+    on_prior = observed_weight < 1.0
 
     latency_ms = int(provider.get("avg_latency_ms", 0) or 0)
     if latency_ms <= 0:
@@ -70,11 +118,17 @@ def _provider_score(
 
     est_cost = estimate_cost_usd(provider["id"], TOKENS_PER_REQUEST_ESTIMATE)
 
-    latency_score = max(0.0, min(1.0, contract.max_latency_ms / max(latency_ms, 1)))
-    cost_score = max(0.0, min(1.0, contract.max_cost_usd / max(est_cost, 1e-6)))
+    latency_score = max(
+        0.0, min(1.0, contract.max_latency_ms / max(latency_ms, 1)))
+    cost_score = max(
+        0.0, min(1.0, contract.max_cost_usd / max(est_cost, 1e-6)))
 
-    total = (adjusted_reliability * 0.55) + (latency_score * 0.30) + (cost_score * 0.15)
-    return total, adjusted_reliability, latency_ms, est_cost, request_count
+    total = (
+        (effective_reliability * 0.55)
+        + (latency_score * 0.30)
+        + (cost_score * 0.15)
+    )
+    return total, effective_reliability, latency_ms, est_cost, request_count, on_prior
 
 
 def _meets_contract(
@@ -111,9 +165,11 @@ def decide_strategy(
             risk_level="high",
         )
 
-    min_possible_latency = min(_provider_latency_ms(p) for p in available_providers)
+    min_possible_latency = min(_provider_latency_ms(p)
+                               for p in available_providers)
     min_possible_cost = min(
-        estimate_cost_usd(str(p.get("id", "unknown")), TOKENS_PER_REQUEST_ESTIMATE)
+        estimate_cost_usd(str(p.get("id", "unknown")),
+                          TOKENS_PER_REQUEST_ESTIMATE)
         for p in available_providers
     )
 
@@ -158,7 +214,7 @@ def decide_strategy(
             )
             continue
 
-        score, reliability, latency_ms, est_cost, request_count = _provider_score(
+        score, reliability, latency_ms, est_cost, request_count, on_prior = _provider_score(
             provider, request
         )
         meets = _meets_contract(reliability, latency_ms, est_cost, request)
@@ -189,6 +245,7 @@ def decide_strategy(
                 "est_cost": est_cost,
                 "meets": meets,
                 "request_count": request_count,
+                "on_prior": on_prior,
             }
         )
 
@@ -203,7 +260,21 @@ def decide_strategy(
 
     candidates.sort(key=lambda item: item["score"], reverse=True)
     best = candidates[0]
-    second: dict[str, Any] | None = candidates[1] if len(candidates) > 1 else None
+    second: dict[str, Any] | None = candidates[1] if len(
+        candidates) > 1 else None
+
+    # Warn when the winning provider's reliability is still Bayesian-prior-based.
+    # This means no empirical data has been collected yet and the estimate is
+    # purely config-declared — real-world behaviour may differ.
+    if best.get("on_prior"):
+        logger.warning(
+            "Provider %s selected on Bayesian prior "
+            "(request_count=%d < prior_strength=%d). "
+            "Reliability estimate is config-declared, not empirically confirmed.",
+            best["id"],
+            best["request_count"],
+            PRIOR_STRENGTH,
+        )
 
     # Fulfill with single provider when top candidate already satisfies contract.
     if best["meets"]:
@@ -212,11 +283,13 @@ def decide_strategy(
             request.min_reliability >= 0.97 or request.max_latency_ms <= 1200
         ):
             second_provider = cast(dict[str, Any], second)
-            second_reliability = float(second_provider.get("reliability", 0.0) or 0.0)
+            second_reliability = float(
+                second_provider.get("reliability", 0.0) or 0.0)
             second_cost = float(second_provider.get("est_cost", 0.0) or 0.0)
             second_latency = int(second_provider.get("latency_ms", 0) or 0)
             second_id = str(second_provider.get("id", "unknown"))
-            combined_rel = 1 - (1 - best["reliability"]) * (1 - second_reliability)
+            combined_rel = 1 - \
+                (1 - best["reliability"]) * (1 - second_reliability)
             hedged_cost = best["est_cost"] + second_cost
             if best["est_cost"] * 2 > request.max_cost_usd:
                 disable_hedging = True
@@ -247,7 +320,8 @@ def decide_strategy(
                             min(best["latency_ms"], second_latency),
                         ),
                         expected_reliability=round(combined_rel, 4),
-                        expected_latency_ms=min(best["latency_ms"], second_latency),
+                        expected_latency_ms=min(
+                            best["latency_ms"], second_latency),
                         estimated_cost_usd=round(hedged_cost, 6),
                     )
 
@@ -272,7 +346,8 @@ def decide_strategy(
     # Try hedging to satisfy reliability when single route cannot.
     if second is not None:
         second_provider = cast(dict[str, Any], second)
-        second_reliability = float(second_provider.get("reliability", 0.0) or 0.0)
+        second_reliability = float(
+            second_provider.get("reliability", 0.0) or 0.0)
         second_cost = float(second_provider.get("est_cost", 0.0) or 0.0)
         second_latency = int(second_provider.get("latency_ms", 0) or 0)
         second_id = str(second_provider.get("id", "unknown"))
@@ -363,7 +438,8 @@ async def execute_single(
     timeout_s: float = 30,
 ) -> dict[str, Any]:
     full_messages = (
-        messages if not system else [{"role": "system", "content": system}] + messages
+        messages if not system else [
+            {"role": "system", "content": system}] + messages
     )
     started = time.monotonic()
 
@@ -492,7 +568,8 @@ async def execute_hedged(
             )
 
         # If the first completed task failed, wait for other tasks up to remaining timeout.
-        remaining_timeout = max(0.1, hard_timeout - (time.monotonic() - started))
+        remaining_timeout = max(
+            0.1, hard_timeout - (time.monotonic() - started))
         if pending:
             done_late, still_pending = await asyncio.wait(
                 pending,

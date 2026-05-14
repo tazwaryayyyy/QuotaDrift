@@ -163,6 +163,37 @@ See `docs/architecture.md` for:
 - Follow issue templates under `.github/ISSUE_TEMPLATE`
 - Keep changes contract-safe and traceable
 
+## Known Limitations
+
+### Single-Worker Requirement
+
+`get_router()` in `quotadrift/router.py` is decorated with `@lru_cache(maxsize=1)`,
+making the LiteLLM Router instance **per-process**.
+
+Running uvicorn with `--workers N > 1` creates **N independent router instances**,
+each with its own:
+
+- Circuit breaker state (open/closed/half-open per model)
+- Cooldown timers and failure counters
+- Reliability and latency score accumulators
+
+A provider marked *open* (tripped) in worker A will still receive traffic from
+workers B … N until they independently accumulate enough failures. This makes
+failover decisions incoherent across workers and can lead to sustained traffic
+to a failing provider.
+
+**Current safe configuration:**
+
+```bash
+uvicorn quotadrift.main:app --workers 1
+```
+
+Resolution path: migrate circuit breaker and model health state to a shared
+external store (e.g. Redis) so all workers read/write a single source of truth.
+Until then, `config.WORKERS = 1` documents this constraint.
+
+---
+
 ## License
 
 MIT (see `LICENSE`).

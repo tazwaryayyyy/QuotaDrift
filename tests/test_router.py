@@ -45,26 +45,20 @@ class TestRouterFailover:
 
     @pytest.mark.asyncio
     async def test_failover_chain(self, mock_router):
-        """Test failover through the provider chain."""
-        # Mock rate limit error for primary, success for secondary
-        rate_limit_error = Exception("Rate limit exceeded")
-        success_response = MagicMock()
-        success_response.model = "openai/gpt-4o-mini"
-        success_response.choices = [MagicMock()]
-        success_response.choices[0].message.content = "Fallback response"
-        success_response.usage.total_tokens = 15
+        """Provider errors must propagate out of chat() so the circuit breaker
+        can record them. Actual provider fallback is handled *inside* LiteLLM
+        Router (via the fallbacks= config) before acompletion() returns, so it
+        cannot be tested by mocking the whole router object.
 
-        # First call fails, second succeeds
-        mock_router.acompletion.side_effect = [rate_limit_error, success_response]
+        Observable contract at the router.py layer:
+        - When acompletion raises, chat() re-raises the exception.
+        - The exception carries the provider's error message so callers and the
+          circuit breaker can act on it.
+        """
+        mock_router.acompletion.side_effect = Exception("Rate limit exceeded")
 
-        # Test chat with retry logic
-        with patch("quotadrift.router._try_mark_error") as mock_mark_error:
-            result = await ai_router.chat([{"role": "user", "content": "test"}])
-
-            # Should have retried and succeeded
-            assert result["content"] == "Fallback response"
-            assert result["model_used"] == "openai/gpt-4o-mini"
-            mock_mark_error.assert_called_once()
+        with pytest.raises(Exception, match="Rate limit exceeded"):
+            await ai_router.chat([{"role": "user", "content": "test"}])
 
     @pytest.mark.asyncio
     async def test_streaming_response(self, mock_router):
@@ -78,9 +72,11 @@ class TestRouterFailover:
 
         chunks[0].model = "groq/llama-3.3-70b-versatile"
 
-        mock_async_iter = AsyncMock()
-        mock_async_iter.__aiter__ = AsyncMock(return_value=iter(chunks))
-        mock_router.acompletion.return_value = mock_async_iter
+        async def _async_chunks():
+            for chunk in chunks:
+                yield chunk
+
+        mock_router.acompletion.return_value = _async_chunks()
 
         # Collect streaming response
         events = []
@@ -108,9 +104,15 @@ class TestRouterFailover:
         # Test circuit breaker state changes
         circuit_breaker = model_manager.circuit_breakers["primary"]
 
-        # Simulate failures
+        # Reset to a clean known state (global instance may carry prior test state)
+        circuit_breaker.state = "closed"
+        circuit_breaker.failure_count = 0
+
+        # Simulate failures — must register each request before recording failure
         for i in range(5):  # Exceed failure threshold
-            model_manager.record_failure("primary", f"req_{i}", "Test error")
+            req_id = f"cb_test_{i}"
+            model_manager.start_request("primary", req_id)
+            model_manager.record_failure("primary", req_id, "Test error")
 
         # Should be open now
         assert circuit_breaker.state == "open"
@@ -156,8 +158,8 @@ class TestProviderTestEndpoint:
                 assert "results" in result
                 assert "summary" in result
                 assert (
-                    result["summary"]["total_providers"] == 7
-                )  # All providers checked
+                    result["summary"]["total_providers"] == 6
+                )  # All providers checked (groq, mistral, siliconflow, huggingface, cloudflare, openrouter)
                 assert result["results"]["groq"]["status"] == "success"
                 assert result["results"]["mistral"]["status"] == "success"
 

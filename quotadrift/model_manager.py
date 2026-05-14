@@ -17,27 +17,11 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from functools import lru_cache
+from pathlib import Path
 
 from quotadrift import config
-
-# Import metrics (will be imported after main.py initializes them)
-try:
-    from quotadrift.main import MODEL_LATENCY, MODEL_REQUESTS, TOKEN_USAGE
-except ImportError:
-    # Fallback dummy metrics for testing
-    class DummyMetric:
-        def labels(self, **_kwargs):
-            return self
-
-        def inc(self):
-            pass
-
-        def observe(self, value):
-            pass
-
-    MODEL_REQUESTS = DummyMetric()
-    MODEL_LATENCY = DummyMetric()
-    TOKEN_USAGE = DummyMetric()
+from quotadrift.metrics import MODEL_LATENCY, MODEL_REQUESTS, TOKEN_USAGE
+from quotadrift.state_store import StateStore
 
 # Configure structured logging
 logging.basicConfig(
@@ -150,15 +134,19 @@ class CircuitBreaker:
 class ModelManager:
     """Advanced model management with circuit breaker and dynamic scoring."""
 
-    def __init__(self):
+    def __init__(self, state_store: StateStore | None = None) -> None:
         self.circuit_breakers: dict[str, CircuitBreaker] = {}
         self.metrics: dict[str, ModelMetrics] = {}
         self.request_traces: dict[str, dict] = {}
+        self._state_store = state_store
 
-        # Initialize circuit breakers and metrics for all models
         self._initialize_models()
 
-        # Note: Background tasks will be started when the event loop is running
+        # Warm-start from persisted state so circuit breaker positions and
+        # reliability scores survive process restarts.
+        if state_store:
+            self._load_persisted_state()
+
         self._background_tasks_started = False
 
     def _initialize_models(self):
@@ -187,6 +175,83 @@ class ModelManager:
             "fallback": 0.5,
         }
         return priority_map.get(slot_name, 0.5)
+
+    def _load_persisted_state(self) -> None:
+        """Warm-start circuit breaker positions and performance baselines.
+
+        Called once during __init__ when a StateStore is provided. The persisted
+        row is used as a prior — in-memory deques are still empty, but aggregate
+        metrics (success_rate, avg_latency_ms) are seeded so contract scoring is
+        not blind on the first request after a restart.
+        """
+        assert self._state_store is not None
+        rows = self._state_store.load_all()
+        now = datetime.utcnow()
+        for slot_name, row in rows.items():
+            if slot_name not in self.metrics:
+                logger.debug(
+                    "Persisted slot %s not found in current config; skipping",
+                    slot_name,
+                )
+                continue
+
+            cb = self.circuit_breakers[slot_name]
+            cb.state = row["circuit_state"]
+            cb.failure_count = row["failure_count"]
+
+            if row.get("last_failure"):
+                cb.last_failure_time = datetime.utcfromtimestamp(
+                    row["last_failure"])
+                if cb.state == "open":
+                    recovery_deadline = datetime.utcfromtimestamp(
+                        row["last_failure"] + cb.config.recovery_timeout
+                    )
+                    if now >= recovery_deadline:
+                        # Timeout elapsed while process was down — go to half_open.
+                        cb.state = "half_open"
+                        cb.next_attempt_time = None
+                    else:
+                        cb.next_attempt_time = recovery_deadline
+
+            m = self.metrics[slot_name]
+            m.avg_latency_ms = row["latency_avg"]
+            m.success_rate = row["reliability"]
+            m.total_requests = row["request_count"]
+
+            logger.info(
+                "Restored state for slot %s: circuit=%s, reliability=%.3f, requests=%d",
+                slot_name,
+                cb.state,
+                m.success_rate,
+                m.total_requests,
+            )
+
+    def _persist_all(self) -> None:
+        """Write aggregate metrics and circuit breaker state to the state DB.
+
+        Only persists per-slot aggregates — not the raw deques — so the write is
+        always a single-row upsert per model slot: O(n_models) with tiny rows.
+        Called from the background _update_scores task every 30 seconds.
+        """
+        if not self._state_store:
+            return
+        for slot_name, m in self.metrics.items():
+            cb = self.circuit_breakers[slot_name]
+            self._state_store.save(
+                slot_name,
+                {
+                    "circuit_state": cb.state,
+                    "failure_count": cb.failure_count,
+                    "last_failure": (
+                        cb.last_failure_time.timestamp()
+                        if cb.last_failure_time
+                        else None
+                    ),
+                    "latency_avg": m.avg_latency_ms,
+                    "reliability": m.success_rate,
+                    "request_count": m.total_requests,
+                },
+            )
 
     def get_available_models(self) -> list[str]:
         """Get list of models that can currently accept requests."""
@@ -428,12 +493,13 @@ class ModelManager:
             self._background_tasks_started = True
 
     async def _update_scores(self):
-        """Background task to update model scores periodically."""
+        """Background task to update model scores and flush state every 30 seconds."""
         while True:
             try:
                 for slot_name in self.metrics:
                     self._update_metrics(slot_name)
-                await asyncio.sleep(30)  # Update every 30 seconds
+                self._persist_all()
+                await asyncio.sleep(30)
             except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.error("Error updating scores: %s", e)
                 await asyncio.sleep(60)
@@ -505,8 +571,10 @@ class ModelManager:
         return snapshot
 
 
-# Global model manager instance
-model_manager = ModelManager()
+# Global model manager instance — wired with persistent state so reliability
+# scores and circuit breaker positions survive process restarts.
+_STATE_DB = Path.home() / ".quotadrift" / "state.db"
+model_manager = ModelManager(state_store=StateStore(_STATE_DB))
 
 
 def get_request_id() -> str:

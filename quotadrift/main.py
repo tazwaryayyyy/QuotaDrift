@@ -42,19 +42,37 @@ from prometheus_client import (
 )
 from pydantic import BaseModel
 
+# Re-export shared metric objects so legacy import paths resolve.
+# The noqa suppresses the "unused import" lint warning — these names are
+# intentionally re-exported, not consumed directly in this module.
+from quotadrift.metrics import MODEL_LATENCY, MODEL_REQUESTS, TOKEN_USAGE  # noqa: F401
+
 from quotadrift import (
     cache,
     compiler,
     config,
     contract_engine,
-    enhanced_agent_runner,
     memory,
     model_manager,
 )
 from quotadrift import (
     router as ai_router,
 )
+from quotadrift import mcp_server as _mcp_module
 from quotadrift.contract_models import OutcomeRecord, RequestContract
+
+
+def _experimental_agent_runner():
+    """Lazily import the experimental agent runner module.
+
+    NOT imported at module level so that the Docker-sandbox code and its
+    heavy dependencies (subprocess, Docker SDK, etc.) are only loaded when
+    one of the /api/run-code or /api/agent/* endpoints is actually called.
+    Placing this import at module level would load the sandbox on every
+    startup, defeating the purpose of the _experimental package gate.
+    """
+    from quotadrift._experimental import enhanced_agent_runner  # noqa: PLC0415
+    return enhanced_agent_runner
 
 load_dotenv()
 
@@ -171,6 +189,22 @@ async def startup():
     memory.init_db()
     model_manager.model_manager.start_background_tasks()
 
+    # Multi-worker guard: per-process circuit breaker state is incoherent
+    # across workers. Log a critical warning so misconfigured deployments
+    # are immediately visible in logs.
+    worker_count = int(os.getenv("UVICORN_WORKERS", "1"))
+    if worker_count > 1:
+        logger.critical(
+            "UVICORN_WORKERS=%d but circuit breaker state is per-process. "
+            "Failover decisions across workers are INCOHERENT. "
+            "Run with --workers 1 until a shared store (e.g. Redis) is implemented. "
+            "See config.WORKERS for details.",
+            worker_count,
+        )
+
+    # MCP stale-client reaper — evicts zombie SSE connections every 60 s.
+    asyncio.create_task(_mcp_module.mcp.reap_stale_clients())
+
     # Verify provider configuration
     await verify_providers()
 
@@ -255,7 +289,7 @@ class RunCodeRequest(BaseModel):
 async def run_code(request: RunCodeRequest):
     """Execute code in a sandboxed environment."""
     try:
-        runner = enhanced_agent_runner.get_runner()
+        runner = _experimental_agent_runner().get_runner()
         result = await runner.run_code(
             code=request.code, language=request.language, filename=request.filename
         )
@@ -285,7 +319,7 @@ async def run_code(request: RunCodeRequest):
 @app.get("/api/languages")
 async def get_supported_languages():
     """Get list of supported programming languages."""
-    runner = enhanced_agent_runner.get_runner()
+    runner = _experimental_agent_runner().get_runner()
     languages = runner.get_supported_languages()
 
     return {
@@ -1320,7 +1354,7 @@ async def clear_cache():
 @app.post("/api/agent/run")
 async def agent_run(body: AgentRunRequest):
     """Execute a snippet of code locally and return the result."""
-    runner = enhanced_agent_runner.get_runner()
+    runner = _experimental_agent_runner().get_runner()
     result = runner.run_code(body.code, body.language)
     return result
 
@@ -1340,7 +1374,7 @@ async def agent_heal(body: AgentHealRequest):
             attempts += 1
             yield f"data: {json.dumps({'type': 'status', 'content': f'Attempt {attempts}: Running code...'})}\n\n"
 
-            runner = enhanced_agent_runner.get_runner()
+            runner = _experimental_agent_runner().get_runner()
             result = runner.run_code(current_code, body.language)
 
             if "error" in result:

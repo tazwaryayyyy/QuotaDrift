@@ -5,14 +5,21 @@ SQLite  → structured storage (projects, sessions, messages)
 ChromaDB → semantic vector store (RAG over conversation history)
 """
 
+import contextlib
+import functools
+import logging
 import re
 import sqlite3
+import time
 from datetime import datetime
 from pathlib import Path
 
 import chromadb
 from rank_bm25 import BM25Okapi
-from sentence_transformers import SentenceTransformer
+
+from quotadrift.embedding import get_embedding_model
+
+logger = logging.getLogger("memory")
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -25,20 +32,69 @@ CHROMA_DIR = BASE_DIR / "chroma_store"
 # Lazy singletons — only loaded once per process
 # ---------------------------------------------------------------------------
 _state: dict[str, object | None] = {
-    "embedder": None,
     "chroma_col": None,
 }
 # project_id -> HybridSearcher
 _hybrid_searchers: dict[int, "HybridSearcher"] = {}
 
 
-def _get_embedder() -> SentenceTransformer:
-    embedder = _state["embedder"]
-    if embedder is None:
-        # 80MB model, CPU-friendly, good for semantic similarity
-        embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        _state["embedder"] = embedder
-    return embedder  # type: ignore[return-value]
+# ---------------------------------------------------------------------------
+# Production SQLite connection helper
+# ---------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def _db():
+    """Production SQLite connection with WAL mode, 5 s busy timeout, and
+    memory-mapped I/O.
+
+    WAL mode allows concurrent readers + one writer so async FastAPI request
+    handlers don't serialize on the global write lock. busy_timeout=5000 gives
+    in-flight writers up to 5 s to release before raising OperationalError.
+    """
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA mmap_size=1073741824")  # 1 GB
+        conn.execute("PRAGMA cache_size=-262144")     # 256 MB
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _sqlite_retry(max_retries: int = 3, base_delay: float = 0.1):
+    """Exponential-backoff retry for sqlite3.OperationalError('database is locked').
+
+    PRAGMA busy_timeout=5000 handles most lock contention at the SQLite engine
+    level. This decorator is an extra safety net for the rare case where 5 s was
+    insufficient (e.g., a long migration holding the write lock).
+    """
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            last_exc: Exception | None = None
+            for attempt in range(max_retries):
+                try:
+                    return fn(*args, **kwargs)
+                except sqlite3.OperationalError as exc:
+                    if "database is locked" not in str(exc):
+                        raise
+                    last_exc = exc
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        "SQLite locked on %s (attempt %d/%d), retrying in %.2fs",
+                        fn.__name__, attempt + 1, max_retries, delay,
+                    )
+                    time.sleep(delay)
+            raise last_exc  # type: ignore[misc]
+        return wrapper
+    return decorator
 
 
 def _get_collection():
@@ -59,31 +115,63 @@ class HybridSearcher:
         self._corpus: list[str] = []
         self._meta: list[dict] = []
         self._bm25: BM25Okapi | None = None
+        self._dirty: bool = False
         self._load_from_db()
 
-    def _load_from_db(self):
-        with sqlite3.connect(DB_PATH) as conn:
+    def _load_from_db(self) -> None:
+        """Bulk-load documents from the DB then build the BM25 index exactly once.
+
+        The original code called add_local() in a loop which rebuilt the full
+        BM25Okapi index on every iteration — O(n²) in document count. We now
+        accumulate corpus entries cheaply and trigger a single rebuild at the end.
+        """
+        with _db() as conn:
             rows = conn.execute(
                 "SELECT filename, content FROM project_files WHERE project_id=?",
                 (self.project_id,),
             ).fetchall()
-            for filename, content in rows:
-                self.add_local(content, {"filename": filename})
+            for row in rows:
+                self._add_to_corpus(
+                    row["content"], {"filename": row["filename"]})
+        self.rebuild_bm25()
 
-    def add_local(self, text: str, meta: dict):
+    def _add_to_corpus(self, text: str, meta: dict) -> None:
+        """Append a document to the corpus without triggering a BM25 rebuild."""
         self._corpus.append(text)
         self._meta.append(meta)
-        tokenized_corpus = [re.findall(r"\w+", d.lower()) for d in self._corpus]
+        self._dirty = True
+
+    def rebuild_bm25(self) -> None:
+        """Build the BM25 index from the current corpus. O(n) — call once after bulk load."""
+        if not self._corpus:
+            self._bm25 = None
+            self._dirty = False
+            return
+        tokenized_corpus = [re.findall(r"\w+", d.lower())
+                            for d in self._corpus]
         self._bm25 = BM25Okapi(tokenized_corpus)
+        self._dirty = False
+
+    def ensure_index(self) -> None:
+        """Rebuild the index only if documents were added since the last build."""
+        if self._dirty:
+            self.rebuild_bm25()
+
+    def add_local(self, text: str, meta: dict) -> None:
+        """Add a document and mark index dirty; the rebuild is deferred to query time."""
+        self._add_to_corpus(text, meta)
 
     def search(self, query: str, n: int = 5) -> list[dict]:
+        self.ensure_index()
         if not self._bm25:
             return []
         tokens = re.findall(r"\w+", query.lower())
         scores = self._bm25.get_scores(tokens)
-        top_idx = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:n]
+        top_idx = sorted(range(len(scores)),
+                         key=lambda i: scores[i], reverse=True)[:n]
         return [
-            {"text": self._corpus[i], "meta": self._meta[i], "score": scores[i]}
+            {"text": self._corpus[i],
+                "meta": self._meta[i], "score": scores[i]}
             for i in top_idx
         ]
 
@@ -98,7 +186,20 @@ def _get_hybrid_searcher(project_id: int) -> HybridSearcher:
 # SQLite setup
 # ---------------------------------------------------------------------------
 def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
+    """Create database schema on first run.
+
+    Uses a raw connection (not _db()) because executescript() issues its own
+    implicit COMMIT before executing — it cannot participate in the _db()
+    transaction lifecycle. The pragmas are still applied explicitly so the
+    first connection sets WAL mode persistently on the DB file.
+    """
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA mmap_size=1073741824")
+        conn.execute("PRAGMA cache_size=-262144")
         conn.executescript("""
             PRAGMA journal_mode=WAL;
 
@@ -157,23 +258,26 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
             CREATE INDEX IF NOT EXISTS idx_outcomes_provider_time ON provider_outcomes(winner_provider, created_at DESC);
         """)
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
 # Projects
 # ---------------------------------------------------------------------------
 def upsert_project(name: str, description: str = "") -> int:
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO projects (name, description, created_at) VALUES (?,?,?)",
             (name, description, _now()),
         )
-        row = conn.execute("SELECT id FROM projects WHERE name=?", (name,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM projects WHERE name=?", (name,)).fetchone()
         return row[0]
 
 
 def list_projects() -> list[dict]:
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         rows = conn.execute(
             "SELECT id, name, description, created_at FROM projects ORDER BY id DESC"
         ).fetchall()
@@ -189,7 +293,7 @@ def get_projects() -> list[dict]:
 
 
 def get_project(project_id: int) -> dict | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         row = conn.execute(
             "SELECT id, name, description, created_at FROM projects WHERE id=?",
             (project_id,),
@@ -209,7 +313,7 @@ def get_project(project_id: int) -> dict | None:
 # ---------------------------------------------------------------------------
 def create_session(project_id: int, title: str = "New session") -> int:
     now = _now()
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         cur = conn.execute(
             "INSERT INTO sessions (project_id, title, created_at, updated_at) VALUES (?,?,?,?)",
             (project_id, title, now, now),
@@ -218,7 +322,7 @@ def create_session(project_id: int, title: str = "New session") -> int:
 
 
 def update_session_title(session_id: int, title: str):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         conn.execute(
             "UPDATE sessions SET title=?, updated_at=? WHERE id=?",
             (title[:60], _now(), session_id),
@@ -226,7 +330,7 @@ def update_session_title(session_id: int, title: str):
 
 
 def update_session_model(session_id: int, model: str):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         conn.execute(
             "UPDATE sessions SET last_model=?, updated_at=? WHERE id=?",
             (model, _now(), session_id),
@@ -235,7 +339,7 @@ def update_session_model(session_id: int, model: str):
 
 def update_session_system(session_id: int, system_prompt: str):
     """Update the system prompt for a session."""
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         conn.execute(
             "UPDATE sessions SET system_prompt=?, updated_at=? WHERE id=?",
             (system_prompt, _now(), session_id),
@@ -244,7 +348,7 @@ def update_session_system(session_id: int, system_prompt: str):
 
 def update_session_messages(session_id: int, messages: list[dict]):
     """Update session messages, replacing all existing messages."""
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         # Delete existing messages
         conn.execute("DELETE FROM messages WHERE session_id=?", (session_id,))
 
@@ -260,7 +364,7 @@ def update_session_messages(session_id: int, messages: list[dict]):
 
 
 def list_sessions(project_id: int | None = None) -> list[dict]:
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         if project_id:
             rows = conn.execute(
                 """SELECT s.id, s.title, s.created_at, s.updated_at, s.last_model,
@@ -290,7 +394,7 @@ def list_sessions(project_id: int | None = None) -> list[dict]:
 
 
 def get_session(session_id: int) -> dict | None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         row = conn.execute(
             """
             SELECT id, project_id, title, created_at, updated_at, last_model
@@ -323,7 +427,7 @@ def save_message(
     tokens: int = 0,
 ) -> int:
     ts = _now()
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         cur = conn.execute(
             "INSERT INTO messages (session_id, role, content, model, tokens, timestamp) VALUES (?,?,?,?,?,?)",
             (session_id, role, content, model, tokens, ts),
@@ -333,7 +437,7 @@ def save_message(
     # Embed into ChromaDB for semantic retrieval (skip system messages)
     if role in ("user", "assistant") and content.strip():
         try:
-            vec = _get_embedder().encode(content).tolist()
+            vec = get_embedding_model().encode(content).tolist()
             _get_collection().add(
                 documents=[content],
                 embeddings=[vec],
@@ -354,7 +458,7 @@ def save_message(
 
 
 def get_messages(session_id: int) -> list[dict]:
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         rows = conn.execute(
             "SELECT role, content, model, tokens, timestamp FROM messages WHERE session_id=? ORDER BY id",
             (session_id,),
@@ -383,7 +487,7 @@ def get_messages_for_llm(session_id: int) -> list[dict]:
 def semantic_search(query: str, session_id: int, n: int = 3) -> list[str]:
     """Find semantically similar past messages within this session."""
     try:
-        vec = _get_embedder().encode(query).tolist()
+        vec = get_embedding_model().encode(query).tolist()
         results = _get_collection().query(
             query_embeddings=[vec],
             n_results=n,
@@ -443,7 +547,7 @@ async def compress_old_messages(session_id: int, keep_recent: int = 10, chat_fn=
     if not chat_fn:
         return
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         rows = conn.execute(
             "SELECT id, role, content FROM messages WHERE session_id=? ORDER BY id",
             (session_id,),
@@ -455,14 +559,15 @@ async def compress_old_messages(session_id: int, keep_recent: int = 10, chat_fn=
 
     old = msgs[:-keep_recent]
 
-    convo_text = "\n".join(f"{m['role'].upper()}: {m['content'][:300]}" for m in old)
+    convo_text = "\n".join(
+        f"{m['role'].upper()}: {m['content'][:300]}" for m in old)
     result = await chat_fn(
         messages=[{"role": "user", "content": convo_text}],
         system=SUMMARIZE_SYSTEM,
     )
     summary = result["content"]
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         old_ids = [m["id"] for m in old]
         conn.execute(
             f"DELETE FROM messages WHERE id IN ({','.join('?' for _ in old_ids)})",
@@ -484,7 +589,7 @@ def delete_last_n_messages(session_id: int, n: int):
     """Deletes the last n messages from a specific session to support Edit / Regenerate features."""
     if n <= 0:
         return
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         conn.execute(
             "DELETE FROM messages WHERE id IN (SELECT id FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?)",
             (session_id, n),
@@ -495,7 +600,7 @@ def delete_last_n_messages(session_id: int, n: int):
 # Project files (codebase indexing)
 # ---------------------------------------------------------------------------
 def index_file(project_id: int, filename: str, content: str):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         conn.execute(
             """INSERT INTO project_files (project_id, filename, content, indexed_at)
                VALUES (?,?,?,?)
@@ -508,7 +613,8 @@ def index_file(project_id: int, filename: str, content: str):
 
     # Embed each file as a chunk for RAG
     try:
-        vec = _get_embedder().encode(f"FILE: {filename}\n{content[:1000]}").tolist()
+        vec = get_embedding_model().encode(
+            f"FILE: {filename}\n{content[:1000]}").tolist()
         col = _get_collection()
         doc_id = f"file_{project_id}_{filename}"
         col.upsert(
@@ -525,7 +631,7 @@ def index_file(project_id: int, filename: str, content: str):
 
 def search_project_files(query: str, project_id: int, n: int = 3) -> list[str]:
     try:
-        vec = _get_embedder().encode(query).tolist()
+        vec = get_embedding_model().encode(query).tolist()
         results = _get_collection().query(
             query_embeddings=[vec],
             n_results=n,
@@ -537,15 +643,16 @@ def search_project_files(query: str, project_id: int, n: int = 3) -> list[str]:
 
 
 def has_project_files(project_id: int) -> bool:
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         row = conn.execute(
-            "SELECT 1 FROM project_files WHERE project_id=? LIMIT 1", (project_id,)
+            "SELECT 1 FROM project_files WHERE project_id=? LIMIT 1", (
+                project_id,)
         ).fetchone()
         return row is not None
 
 
 def get_project_id_for_session(session_id: int) -> int:
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         row = conn.execute(
             "SELECT project_id FROM sessions WHERE id=?", (session_id,)
         ).fetchone()
@@ -567,7 +674,7 @@ def export_session_md(session_id: int) -> str:
 # Contract outcomes
 # ---------------------------------------------------------------------------
 def save_provider_outcome(record: dict):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         conn.execute(
             """
             INSERT INTO provider_outcomes (
@@ -605,7 +712,7 @@ def save_provider_outcome(record: dict):
 
 
 def get_provider_window_stats(provider_slot: str, window_size: int = 50) -> dict:
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         rows = conn.execute(
             """
             SELECT success, latency_ms, cost_usd

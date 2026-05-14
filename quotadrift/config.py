@@ -15,6 +15,19 @@ Priority chain (cloud-only, no GPU required):
 from datetime import datetime
 from typing import Literal
 
+# ---------------------------------------------------------------------------
+# Deployment constraints
+# ---------------------------------------------------------------------------
+# Do NOT increase WORKERS until circuit-breaker state is moved to a shared
+# store (e.g. Redis). Each uvicorn worker maintains independent in-process
+# circuit breaker state and LiteLLM Router lru_cache. Failover decisions
+# across workers are incoherent with >1 worker — one worker may mark a
+# provider as open while another continues routing traffic to it.
+#
+# Safe configuration: uvicorn quotadrift.main:app --workers 1
+# See README.md "Known Limitations" for the full rationale.
+WORKERS: int = 1
+
 # Model display names for the UI
 MODEL_DISPLAY = {
     "groq/llama-3.3-70b-versatile": "Groq · Llama 3.3 70B",
